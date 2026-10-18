@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from app.agent.runner import chat_turn
+from app.util.redact import redact
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -21,7 +22,7 @@ async def chat(body: ChatIn):
             async for event in chat_turn(body.session_id, body.message):
                 yield {"event": event["type"], "data": json.dumps(event)}
         except Exception as exc:  # surface LLM/rate-limit errors to the UI instead of a silent hang
-            yield {"event": "error", "data": json.dumps({"type": "error", "message": str(exc)})}
+            yield {"event": "error", "data": json.dumps({"type": "error", "message": redact(exc)})}
         yield {"event": "done", "data": "{}"}
 
     return EventSourceResponse(stream())

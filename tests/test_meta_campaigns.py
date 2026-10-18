@@ -95,3 +95,54 @@ def test_local_radius_targeting_replaces_countries():
 def test_pfbid_links_are_rejected_with_help(raw):
     with pytest.raises(ValueError, match="numeric post id"):
         meta.existing_post_id("999", raw)
+
+
+class LiveFakeClient(FakeClient):
+    """Live mode: GET lookups are answered from `existing` (name -> id)."""
+
+    def __init__(self, existing=None, fail_on=None):
+        super().__init__(fail_on=fail_on)
+        self.s = Settings(_env_file=None, meta_dry_run=False, meta_ad_account_id="123", meta_page_id="999",
+                          meta_instagram_account_id="555")
+        self.existing, self.gets = existing or {}, []
+
+    async def get(self, path, **params):
+        self.gets.append((path, params))
+        name = params.get("filtering", [{}])[0].get("value")
+        return {"data": [{"id": self.existing[name], "name": name}]} if name in self.existing else {"data": []}
+
+
+async def test_platforms_and_instagram_account_are_sent():
+    c, client = _campaign(), LiveFakeClient()
+    c.id = 7
+    await meta.create_on_meta(client, c)
+    adset = next(d for p, d in client.calls if p.endswith("/adsets"))
+    creative = next(d for p, d in client.calls if p.endswith("/adcreatives"))
+    assert adset["targeting"]["publisher_platforms"] == ["facebook", "instagram"]
+    assert creative["object_story_spec"]["instagram_user_id"] == "555"
+    assert adset["name"] == "Bakery [milo #7] - ad set"  # unique name on Meta
+
+
+async def test_timed_out_create_is_found_not_duplicated():
+    c, client = _campaign(), LiveFakeClient(existing={"Bakery [milo #7]": "camp_existing"})
+    c.id = 7
+    await meta.create_on_meta(client, c)
+    assert c.meta_campaign_id == "camp_existing"
+    assert not any(p.endswith("/campaigns") for p, _ in client.calls)  # no second campaign created
+
+
+async def test_partial_status_change_says_what_changed():
+    c, client = _campaign(), LiveFakeClient()
+    c.meta_ad_id, c.meta_adset_id, c.meta_campaign_id = "ad1", "set1", "camp1"
+    client.fail_on = "set1"
+    with pytest.raises(MetaAPIError, match="already changed: ad ad1"):
+        await meta.set_status(client, c, "ACTIVE")
+
+
+async def test_missing_id_is_a_clear_error():
+    class NoId(LiveFakeClient):
+        async def post(self, path, **data):
+            return {"success": True}
+
+    with pytest.raises(MetaAPIError, match="did not return an id"):
+        await meta.create_on_meta(NoId(), _campaign())

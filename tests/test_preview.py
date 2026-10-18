@@ -3,11 +3,9 @@ import httpx
 import pytest
 import respx
 from fastapi.testclient import TestClient
-from sqlmodel import Session
-
 from app.config import Settings
+from app.db import store
 from app.db.models import Campaign
-from app.db.session import engine
 from app.main import app
 from app.meta import campaigns as meta
 from app.meta.client import MetaClient
@@ -36,12 +34,8 @@ async def test_non_facebook_iframe_is_rejected():
 
 
 def _campaign(**kw):
-    with Session(engine) as s:
-        c = Campaign(name="Bakery", daily_budget=50000, countries=["IN"], headline="H", primary_text="T",
-                     link_url="https://example.com", **kw)
-        s.add(c)
-        s.commit()
-        return c.id
+    return store.insert(Campaign(name="Bakery", daily_budget=50000, countries=["IN"], headline="H", primary_text="T",
+                                 link_url="https://example.com", **kw)).id
 
 
 def test_preview_endpoint_explains_dry_run():
@@ -62,13 +56,15 @@ async def test_generate_preview_from_draft_sends_story_spec():
     route = respx.get("https://graph.facebook.com/v26.0/act_123/generatepreviews").mock(
         return_value=httpx.Response(200, json={"data": [{"body": BODY}]}))
     c = MetaClient(Settings(_env_file=None, meta_dry_run=False, meta_access_token="t", meta_ad_account_id="123",
-                            meta_page_id="999"))
+                            meta_page_id="999", meta_instagram_account_id="555"))
     camp = Campaign(name="Cafe", daily_budget=30000, headline="Burgers", primary_text="Shakes",
-                    link_url="https://example.com")
+                    link_url="https://example.com", meta_image_hash="abc")
     src = await meta.generate_preview_src(c, camp, "INSTAGRAM_STANDARD")
     assert src.startswith("https://www.facebook.com/")
     import json
     creative = json.loads(route.calls[0].request.url.params["creative"])
     assert creative["object_story_spec"]["page_id"] == "999"
     assert creative["object_story_spec"]["link_data"]["name"] == "Burgers"
+    assert creative["object_story_spec"]["link_data"]["image_hash"] == "abc"
+    assert creative["object_story_spec"]["instagram_user_id"] == "555"  # v22+ field, not instagram_actor_id
     await c.aclose()

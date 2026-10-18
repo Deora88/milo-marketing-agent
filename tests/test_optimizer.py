@@ -1,24 +1,23 @@
-"""Optimization loop: rules, cooldowns, approvals-only output, and the old-database migration."""
+"""Optimization loop: rules, caps, cooldowns, approvals-only output, simulated-data labels."""
 import asyncio
-import sqlite3
 
 from fastapi.testclient import TestClient
-from sqlmodel import Session, select
 
 from app import actions
 from app.config import Settings
+from app.db import store
 from app.db.models import Approval, Campaign
-from app.db.session import engine
 from app.jobs.scheduler import pull_metrics
 from app.main import app
 from app.mcp_server.server import create_campaign_draft, list_pending_approvals, request_publish
 from app.optimizer import CampaignStats, analyze, run_optimizer
+from tests.conftest import WEB
 
-S = Settings()
+S = Settings(_env_file=None, max_daily_budget_inr=5000)
 
 
-def stats(cid, ctr_clicks, impressions=10_000, spend=1000.0, budget=500.0, status="active"):
-    return CampaignStats(cid, f"C{cid}", status, budget, spend, impressions, ctr_clicks)
+def stats(cid, ctr_clicks, impressions=10_000, spend=1000.0, budget=500.0, status="active", simulated=False):
+    return CampaignStats(cid, f"C{cid}", status, budget, spend, impressions, ctr_clicks, simulated)
 
 
 def test_rules_pause_scale_trim():
@@ -39,59 +38,84 @@ def test_rules_ignore_thin_data_drafts_and_respect_caps():
     assert analyze([stats(1, 10, status="paused")], S) == []
     capped = analyze([stats(1, 50), stats(2, 400, spend=500, budget=5000)], S)
     assert all(r.campaign_id != 2 for r in capped)  # already at the max budget
+    tight = Settings(_env_file=None, max_daily_budget_inr=500)
+    assert all(r.action != "update_budget" or r.payload["daily_budget"] <= 50000
+               for r in analyze([stats(1, 50), stats(2, 250)], tight))
     single = analyze([stats(1, 40)], S)  # one campaign, CTR 0.4% < 0.6% floor
     assert single[0].action == "pause_campaign"
 
 
-def _live_campaigns(n=4):
+def test_reason_says_when_data_is_simulated():
+    recs = analyze([stats(1, 50, simulated=True), stats(2, 150, simulated=True)], S)
+    assert recs and "simulated data" in recs[0].reason
+
+
+def _running_campaigns(n=4):
     ids = []
-    with Session(engine) as s:
-        for i in range(n):
-            cid = create_campaign_draft(name=f"Shop {i}", daily_budget_inr=500, countries=["IN"], age_min=20, age_max=45,
-                                        headline="Fresh deals", primary_text="Visit us", link_url="https://example.com")["campaign_id"]
-            aid = request_publish(cid)["approval_id"]
-            asyncio.run(actions.execute(s, s.get(Approval, aid)))
-            a = s.get(Approval, aid); a.status = "approved"; s.add(a); s.commit()
-            ids.append(cid)
+    for i in range(n):
+        cid = create_campaign_draft(name=f"Shop {i}", daily_budget_inr=200, countries=["IN"], age_min=20, age_max=45,
+                                    headline="Fresh deals", primary_text="Visit us", link_url="https://example.com",
+                                    platforms=["facebook"])["campaign_id"]
+        aid = request_publish(cid)["approval_id"]
+        asyncio.run(actions.execute(store.get(Approval, aid)))
+        a = store.get(Approval, aid)
+        a.status = "approved"
+        store.save(a)
+        ids.append(cid)
     return ids
 
 
-def test_loop_files_approvals_only_and_cools_down():
-    _live_campaigns()
+def test_loop_files_approvals_only_and_cools_down(monkeypatch):
+    monkeypatch.setattr("app.optimizer.get_settings", lambda: Settings(_env_file=None, optimizer_min_impressions=100,
+                                                                         max_daily_budget_inr=5000,
+                                                                         max_total_daily_budget_inr=50000))
+    monkeypatch.setattr("app.approvals.get_settings", lambda: Settings(_env_file=None, max_daily_budget_inr=5000,
+                                                                         max_total_daily_budget_inr=50000))
+    _running_campaigns()
     asyncio.run(pull_metrics())  # pull also runs the optimizer
-    with Session(engine) as s:
-        recs = s.exec(select(Approval).where(Approval.source == "optimizer")).all()
-        assert recs, "simulated campaigns differ in quality, so at least one recommendation is expected"
-        assert all(a.status == "pending" and a.reason for a in recs)
-        assert all(s.get(Campaign, a.campaign_id).status == "active" for a in recs)  # nothing applied
-        again = run_optimizer(s)
+    recs = store.find(Approval, {"source": "optimizer"})
+    assert recs, "simulated campaigns differ in quality, so at least one recommendation is expected"
+    assert all(a.status == "pending" and "simulated data" in a.reason for a in recs)
+    assert all(store.get(Campaign, a.campaign_id).status == "active" for a in recs)  # nothing applied
+    again = run_optimizer()
     assert again["recommendations"] == [] and again["skipped"]  # cooldown / already pending
     pending = list_pending_approvals()["pending"]
     assert any(p["source"] == "optimizer" and p["reason"] for p in pending)
 
 
 def test_api_run_and_status():
-    c = TestClient(app)
+    c = TestClient(app, headers=WEB)
     assert c.get("/api/status").json()["optimizer"]["enabled"] is True
     r = c.post("/api/optimizer/run").json()
     assert set(r) == {"checked", "recommendations", "skipped"}
 
 
-def test_old_database_gets_new_columns(tmp_path):
-    db = tmp_path / "old.db"
-    con = sqlite3.connect(db)
-    con.execute("CREATE TABLE approval (id INTEGER PRIMARY KEY, action VARCHAR, campaign_id INTEGER, payload JSON, "
-                "summary VARCHAR, status VARCHAR, created_at DATETIME, decided_at DATETIME)")
-    con.execute("INSERT INTO approval (action, campaign_id, payload, summary, status) VALUES ('pause_campaign', 1, '{}', 'old', 'approved')")
-    con.commit(); con.close()
-    from sqlmodel import create_engine
-    import app.db.session as sess
-    original = sess.engine
-    sess.engine = create_engine(f"sqlite:///{db}")
-    try:
-        sess.init_db()
-    finally:
-        sess.engine = original
-    cols = {r[1] for r in sqlite3.connect(db).execute("PRAGMA table_info(approval)")}
-    assert {"reason", "source"} <= cols
-    assert sqlite3.connect(db).execute("SELECT source FROM approval").fetchone()[0] == "agent"
+def test_failing_campaign_does_not_stop_the_pull(monkeypatch):
+    ids = _running_campaigns(2)
+    from app.metrics.simulated import SimulatedInsightsProvider
+    real = SimulatedInsightsProvider.daily
+
+    async def flaky(self, campaign, days=7):
+        if campaign.id == ids[0]:
+            raise RuntimeError("Meta timeout")
+        return await real(self, campaign, days)
+
+    monkeypatch.setattr(SimulatedInsightsProvider, "daily", flaky)
+    assert asyncio.run(pull_metrics()) >= 1  # second campaign still written
+    from app.db.models import AuditLog
+    assert store.find(AuditLog, {"event": "metrics_failed"})
+
+
+def test_empty_response_keeps_stored_metrics(monkeypatch):
+    ids = _running_campaigns(1)
+    asyncio.run(pull_metrics())
+    from app.db.models import MetricSnapshot
+    before = store.count(MetricSnapshot, {"campaign_id": ids[0]})
+    from app.metrics.simulated import SimulatedInsightsProvider
+
+    async def empty(self, campaign, days=7):
+        return []
+
+    monkeypatch.setattr(SimulatedInsightsProvider, "daily", empty)
+    asyncio.run(pull_metrics())
+    assert store.count(MetricSnapshot, {"campaign_id": ids[0]}) == before > 0

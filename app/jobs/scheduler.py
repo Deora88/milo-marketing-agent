@@ -1,13 +1,18 @@
-"""Background job: every N minutes, pull metrics for live campaigns into MetricSnapshot."""
+"""Background job: every N minutes, pull metrics for campaigns on Meta into MetricSnapshot, then run the optimizer.
+
+One failing campaign never stops the others: the error is logged to the Activity page and the pull continues.
+Rows are replaced per date only when the provider returns data, so an empty or failed response never wipes
+stored metrics.
+"""
 import logging
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from sqlmodel import Session, delete, select
 
 from app.config import get_settings
+from app.db import store
 from app.db.models import Campaign, MetricSnapshot
-from app.db.session import engine
 from app.metrics import get_provider
+from app.util.redact import redact
 
 log = logging.getLogger("milo.jobs")
 scheduler = AsyncIOScheduler(timezone="UTC")
@@ -15,23 +20,32 @@ scheduler = AsyncIOScheduler(timezone="UTC")
 
 async def pull_metrics() -> int:
     provider = get_provider()
-    written = 0
-    with Session(engine) as session:
-        live = session.exec(select(Campaign).where(Campaign.status.in_(["active", "paused"]))).all()
-        for c in live:
-            rows = await provider.daily(c, days=7)
-            session.exec(delete(MetricSnapshot).where(MetricSnapshot.campaign_id == c.id))
+    written, failed = 0, 0
+    try:
+        for c in store.find(Campaign, {"status": {"$in": ["active", "paused"]}}):
+            try:
+                rows = await provider.daily(c, days=7)
+            except Exception as exc:  # noqa: BLE001
+                failed += 1
+                log.warning("metrics pull failed for campaign %s: %s", c.id, redact(exc))
+                store.audit("metrics_failed", campaign_id=c.id, error=redact(exc))
+                continue
+            if not rows:
+                continue  # keep what we have
+            coll = store.db()[MetricSnapshot.collection]
+            coll.delete_many({"campaign_id": c.id, "date": {"$in": [r.date for r in rows]}})
             for r in rows:
-                session.add(MetricSnapshot(campaign_id=c.id, date=r.date, spend=r.spend, impressions=r.impressions,
-                                           reach=r.reach, clicks=r.clicks, ctr=r.ctr, cpc=r.cpc, source=provider.source))
+                store.insert(MetricSnapshot(campaign_id=c.id, date=r.date, spend=r.spend, impressions=r.impressions,
+                                            reach=r.reach, clicks=r.clicks, ctr=r.ctr, cpc=r.cpc,
+                                            source=provider.source))
                 written += 1
-        session.commit()
-    log.info("pulled %d metric rows (%s)", written, provider.source)
+    finally:
+        await provider.aclose()
+    log.info("pulled %d metric rows (%s), %d campaign(s) failed", written, provider.source, failed)
     if get_settings().optimizer_enabled:
         from app.optimizer import run_optimizer
 
-        with Session(engine) as session:
-            result = run_optimizer(session)
+        result = run_optimizer()
         log.info("optimizer: %d recommendation(s), %d skipped", len(result["recommendations"]), len(result["skipped"]))
     return written
 

@@ -73,7 +73,13 @@ class MetaClient:
                 await asyncio.sleep(1.0)
             resp = await self._http.request(method, path, params=params, data=body or None, headers=headers)
             self.last_usage_pct = max_usage_pct(resp.headers)
-            payload = resp.json()
+            try:
+                payload = resp.json()
+            except ValueError:  # proxies / outages can return HTML
+                raise MetaAPIError(resp.status_code, None,
+                                   f"Meta returned a non-JSON response (HTTP {resp.status_code})") from None
+            if not isinstance(payload, dict):
+                raise MetaAPIError(resp.status_code, None, "Meta returned an unexpected response")
             err = payload.get("error")
             if not err:
                 return payload

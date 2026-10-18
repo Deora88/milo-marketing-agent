@@ -1,13 +1,12 @@
-"""Creating approval requests. Shared by the MCP server (request_* tools).
+"""Creating approval requests. Shared by the MCP server (request_* tools), the UI buttons and the optimizer.
 
 A request never changes a live ad. It stores a pending Approval; app/actions.py executes it only after a human
 clicks Approve in the dashboard (POST /api/approvals/{id}/approve).
 """
-from sqlmodel import Session, select
-
-from app.actions import describe
+from app.actions import describe, spend_blocked_reason, total_live_budget
+from app.config import get_settings
+from app.db import store
 from app.db.models import Approval, Campaign
-from app.db.session import audit
 
 # action -> campaign statuses it may start from
 ALLOWED_FROM = {
@@ -21,48 +20,70 @@ def to_minor(rupees: float) -> int:
     return int(round(rupees * 100))
 
 
-def create_approval(
-    session: Session,
-    action: str,
-    campaign_id: int,
-    payload: dict | None = None,
-    reason: str = "",
-    source: str = "agent",
-) -> dict:
+def budget_cap_error(c: Campaign, new_budget: int, action: str) -> str | None:
+    """Hard caps for every budget that could spend money, whoever asked (agent, UI or optimizer)."""
+    s = get_settings()
+    if new_budget > to_minor(s.max_daily_budget_inr):
+        return f"Rs {new_budget / 100:,.0f}/day is above the Rs {s.max_daily_budget_inr:,.0f}/day cap (MAX_DAILY_BUDGET_INR)."
+    will_run = action == "publish_campaign" or c.status == "active"
+    if will_run:
+        total = total_live_budget(exclude_id=c.id) + new_budget
+        if total > to_minor(s.max_total_daily_budget_inr):
+            return (f"Running campaigns would total Rs {total / 100:,.0f}/day, above the "
+                    f"Rs {s.max_total_daily_budget_inr:,.0f}/day account cap (MAX_TOTAL_DAILY_BUDGET_INR).")
+    return None
+
+
+def create_approval(action: str, campaign_id: int, payload: dict | None = None, reason: str = "",
+                    source: str = "agent") -> dict:
     payload = payload or {}
     if action not in ALLOWED_FROM:
         return {"status": "error", "message": f"unknown action {action}"}
-    c = session.get(Campaign, campaign_id)
+    c = store.get(Campaign, campaign_id)
     if c is None:
         return {"status": "error", "message": f"Campaign {campaign_id} not found."}
-    existing = session.exec(
-        select(Approval).where(Approval.campaign_id == c.id, Approval.action == action, Approval.status == "pending")
-    ).first()
+
+    existing = store.find(Approval, {"campaign_id": c.id, "action": action, "status": {"$in": ["pending", "executing"]}})
     if existing:
-        return {"status": "pending_approval", "approval_id": existing.id, "summary": existing.summary,
+        a = existing[0]
+        if a.status == "pending" and payload and a.payload != payload:
+            # Same kind of change, new details (e.g. a different budget): update the waiting request.
+            err = budget_cap_error(c, payload.get("daily_budget", c.daily_budget), action)
+            if err:
+                return {"status": "error", "message": err}
+            a.payload, a.summary, a.reason, a.source = payload, describe(action, c, payload), reason, source
+            store.save(a)
+            store.audit("approval_updated", approval_id=a.id, action=action, campaign_id=c.id, source=source)
+            return {"status": "pending_approval", "approval_id": a.id, "summary": a.summary,
+                    "message": "Updated the request that was already waiting. Not executed until the user approves."}
+        return {"status": "pending_approval", "approval_id": a.id, "summary": a.summary,
                 "message": "An approval for this is already waiting for the user."}
 
     if c.status not in ALLOWED_FROM[action]:
         return {"status": "error", "message": f"Cannot {action} a campaign that is '{c.status}'."}
-    if action == "update_budget" and payload.get("daily_budget") == c.daily_budget:
-        return {"status": "error", "message": "New budget equals the current budget."}
+    if action == "update_budget":
+        if payload.get("daily_budget") == c.daily_budget:
+            return {"status": "error", "message": "New budget equals the current budget."}
+        err = budget_cap_error(c, payload["daily_budget"], action)
+    elif action == "publish_campaign":
+        err = budget_cap_error(c, c.daily_budget, action)
+        if (not err and "instagram" in c.platforms and not c.image_path
+                and not get_settings().meta_page_post_id and not c.meta_creative_id):
+            err = ("Instagram ads need an image. Upload one on the campaign page, "
+                   "or run the campaign on Facebook only.")
+        if not err and c.status == "paused":
+            err = spend_blocked_reason()  # resuming starts delivery = spends money
+    else:
+        err = None
+    if err:
+        return {"status": "error", "message": err}
 
-    approval = Approval(
-        action=action,
-        campaign_id=c.id,
-        payload=payload,
-        summary=describe(action, c, payload),
-        reason=reason,
-        source=source,
-    )
-    session.add(approval)
+    approval = store.insert(Approval(action=action, campaign_id=c.id, payload=payload,
+                                     summary=describe(action, c, payload), reason=reason, source=source))
     if action == "publish_campaign" and c.status == "draft":
         c.status = "pending_approval"
-        session.add(c)
-    session.commit()
-    session.refresh(approval)
-    audit(session, "approval_requested", approval_id=approval.id, action=action, campaign_id=c.id, source=source)
-    session.commit()
+        store.save(c)
+    store.audit("approval_requested", approval_id=approval.id, action=action, campaign_id=c.id, source=source)
     return {
         "status": "pending_approval",
         "approval_id": approval.id,

@@ -3,14 +3,16 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.api import approvals, campaigns, chat, insights
 from app.config import get_settings
-from app.db.session import init_db
+from app.db.store import init_db
 from app.jobs import scheduler
+from app.security import guard_requests
+from app.util.redact import redact
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -18,7 +20,11 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db()
+    try:
+        init_db()
+    except Exception as exc:  # noqa: BLE001 - start anyway; Settings shows the database error
+        logging.getLogger("milo").error("MongoDB not reachable (%s). Check MONGODB_URI and Atlas Network Access.",
+                                        redact(exc))
     scheduler.start()
     yield
     scheduler.scheduler.shutdown(wait=False)
@@ -40,9 +46,19 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def _guard(request: Request, call_next):  # host allow-list, CSRF header, optional token
+    return await guard_requests(request, call_next)
+
+
 @app.post("/api/metrics/refresh", tags=["metrics"])
 async def refresh_metrics():
-    return {"rows": await scheduler.pull_metrics()}
+    try:
+        return {"rows": await scheduler.pull_metrics()}
+    except Exception as exc:  # noqa: BLE001
+        from fastapi import HTTPException
+
+        raise HTTPException(502, f"Metrics pull failed: {redact(exc)}") from exc
 
 
 @app.get("/api/health")

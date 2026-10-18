@@ -7,9 +7,7 @@ Returning a dict skips the tool and hands that dict back to the model.
 """
 from typing import Any, Optional
 
-from sqlmodel import Session
-
-from app.db.session import audit, engine
+from app.db import store
 from app.mcp_server.server import TOOL_NAMES
 
 REQUEST_TOOLS = {"request_publish", "request_pause", "request_budget_change"}
@@ -19,7 +17,5 @@ def tool_guard(tool: Any, args: dict[str, Any], tool_context: Any) -> Optional[d
     if tool.name not in TOOL_NAMES:
         return {"status": "blocked", "message": f"Tool '{tool.name}' is not allowed for Milo."}
     if tool.name in REQUEST_TOOLS:
-        with Session(engine) as session:
-            audit(session, "change_requested_by_agent", tool=tool.name, args=args)
-            session.commit()
+        store.audit("change_requested_by_agent", tool=tool.name, args=args)
     return None

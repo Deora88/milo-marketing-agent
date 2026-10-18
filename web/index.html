@@ -312,15 +312,27 @@
   const skeleton = (h = "h-4", w = "w-full") => `<div class="skeleton ${h} ${w}"></div>`;
 
   // ---------- API ----------
-  async function api(path, opts = {}) {
+  // Every request carries X-Milo-Client (the backend refuses change requests without it: blocks CSRF).
+  // If the backend has API_TOKEN set, the token is asked once and kept in this browser.
+  function authHeaders(extra = {}) {
+    const h = { "X-Milo-Client": "web", ...extra };
+    let tok = ""; try { tok = localStorage.getItem("milo_token") || ""; } catch { /* storage blocked */ }
+    if (tok) h.Authorization = `Bearer ${tok}`;
+    return h;
+  }
+  async function api(path, opts = {}, retried = false) {
     let res;
     try {
-      res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
+      res = await fetch(path, { ...opts, headers: authHeaders(opts.body instanceof FormData ? {} : { "Content-Type": "application/json" }) });
     } catch {
       setConn(false);
       throw new Error("Can't reach the Milo backend. Is uvicorn running?");
     }
     const body = await res.json().catch(() => ({}));
+    if (res.status === 401 && !retried) {
+      const tok = window.prompt("This Milo server needs its API token (API_TOKEN in .env):");
+      if (tok) { try { localStorage.setItem("milo_token", tok.trim()); } catch { /* ignore */ } return api(path, opts, true); }
+    }
     if (!res.ok) throw new Error(typeof body.detail === "string" ? body.detail : `Request failed (${res.status})`);
     setConn(true);
     return body;
@@ -349,7 +361,10 @@
     pending: ["Pending", "bg-warn/10 text-warn"],
     approved: ["Approved", "bg-ok/10 text-ok"],
     rejected: ["Rejected", "bg-danger/10 text-danger"],
+    executing: ["Running…", "bg-accent-soft text-accent"],
   };
+  const PLATFORM = { facebook: "Facebook", instagram: "Instagram" };
+  const platforms = (c) => (c.platforms || ["facebook"]).map((p) => PLATFORM[p] || p).join(" + ");
   function badge(map, status) {
     const [label, cls] = map[status] || [status, "bg-bg text-muted"];
     return `<span class="whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium ${cls}">${esc(label)}</span>`;
@@ -486,7 +501,7 @@
     try {
       state.status = await api("/api/status");
       const s = state.status;
-      $("modePill").innerHTML = `${s.meta_dry_run ? "Dry run" : "Live on Meta " + esc(s.meta_api_version)} · ${s.metrics_provider === "simulated" ? "simulated metrics" : "Meta Insights"}`;
+      $("modePill").innerHTML = `${s.meta_dry_run ? "Dry run" : "Live on Meta " + esc(s.meta_api_version)} · ${s.meta_dry_run ? "simulated metrics" : s.spend.allowed ? "spending ON" : "spending off (ads stay paused)"}`;
     } catch { /* setConn handled */ }
   }
   async function loadPendingCount() {
@@ -526,6 +541,7 @@
       $("agentDetails").innerHTML = `
         <div class="flex justify-between gap-2"><span>Model</span><span class="truncate text-ink" title="${esc(s.model)}">${esc((s.model || "").replace(/^openrouter\//, ""))}</span></div>
         <div class="flex justify-between"><span>Meta</span><span class="text-ink">${s.meta_dry_run ? "Dry run" : "Live"} · ${esc(s.meta_api_version || "")}</span></div>
+        <div class="flex justify-between"><span>Spending</span><span class="${s.spend.allowed ? "text-warn" : "text-ink"}">${s.meta_dry_run ? "None (dry run)" : s.spend.allowed ? "Allowed · cap " + inr(s.spend.max_total_daily_budget_inr) + "/day" : "Off · ads stay paused"}</span></div>
         <div class="flex justify-between"><span>Metrics</span><span class="text-ink">${s.metrics_provider === "simulated" ? "Simulated" : "Meta Insights"}</span></div>
         <p class="pt-1 ${s.llm_key_set ? "text-ok" : "text-warn"}">${s.llm_key_set ? "Tools connected through MCP" : "Add OPENROUTER_API_KEY to .env to turn chat on"}</p>`;
 
@@ -605,6 +621,7 @@
     list_pending_approvals: "Checking pending approvals",
     research_topic: "Researching recent context",
     read_landing_page: "Reading your landing page",
+    generate_ad_image: "Generating the ad image (FLUX.1 schnell)",
   };
 
   function renderChat() {
@@ -618,7 +635,8 @@
       const steps = m.steps.map((s) => `<div class="flex items-center gap-2 text-xs text-muted">${s.done ? '<span class="text-ok">✓</span>' : spinner(12)}<span>${esc(TOOL_LABELS[s.name] || s.name)}</span></div>`).join("");
       const thinking = m.pending && !m.text ? `<div class="flex items-center gap-2 text-sm text-muted"><span class="dots"><span></span> <span></span> <span></span></span> Milo is thinking</div>` : "";
       const body = m.text ? md(m.text) : "";
-      const cards = (m.research ? sourcesCard(m.research) : "") + (m.proposals || []).map(proposalCard).join("") + (m.approvals || []).map((a) => `<div class="mt-2">${approvalCard(a, { compact: true, showCampaign: false })}</div>`).join("");
+      const imgs = (m.images || []).map((g) => `<a href="#campaign/${g.id}" class="mt-2 block"><img src="/api/campaigns/${g.id}/image?v=${g.v}" alt="Generated ad image" class="max-h-56 rounded-lg border border-line"><span class="text-xs text-muted">AI image (FLUX.1 schnell) · open campaign to regenerate or replace</span></a>`).join("");
+      const cards = imgs + (m.research ? sourcesCard(m.research) : "") + (m.proposals || []).map(proposalCard).join("") + (m.approvals || []).map((a) => `<div class="mt-2">${approvalCard(a, { compact: true, showCampaign: false })}</div>`).join("");
       const err = m.error ? `<div class="mt-2 rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-sm text-danger">${esc(m.error)}</div>` : "";
       return `<div class="flex justify-start"><div class="w-full max-w-[92%] space-y-1.5 rounded-xl bg-accent-soft px-3 py-2 text-sm leading-relaxed">${steps}${thinking}${body}${cards}${err}</div></div>`;
     }).join("");
@@ -658,7 +676,7 @@
     state.messages.push(reply);
     renderChat();
     try {
-      const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: state.sessionId, message }) });
+      const res = await fetch("/api/chat", { method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ session_id: state.sessionId, message }) });
       if (!res.ok || !res.body) throw new Error(`Chat failed (${res.status})`);
       const reader = res.body.getReader(), dec = new TextDecoder();
       let buf = "";
@@ -700,6 +718,10 @@
       if (ev.name === "create_campaign_draft") {
         const id = extractId(ev.result);
         if (id) { try { reply.proposals.push(await api(`/api/campaigns/${id}`)); } catch { /* ignore */ } }
+      }
+      if (ev.name === "generate_ad_image") {
+        const g = unwrap(ev.result);
+        if (g && g.status === "image_ready") (reply.images = reply.images || []).push({ id: g.campaign_id, v: Date.now() });
       }
       if (ev.name === "research_topic") {
         const r = unwrap(ev.result);
@@ -824,6 +846,7 @@
           <div class="card p-4 text-sm">
             <h2 class="font-display text-base font-medium mb-2">Targeting & budget</h2>
             ${row("Objective", esc(OBJECTIVES[c.objective] || c.objective))}
+            ${row("Runs on", esc(platforms(c)))}
             ${row(c.radius_km ? "Area" : "Countries", esc(where(c)))}
             ${row("Ages", `${c.age_min}–${c.age_max}`)}
             ${row("Budget / day", inr(paise(c.daily_budget)))}
@@ -835,6 +858,7 @@
             ${row("Meta campaign", c.meta_campaign_id ? `<span class="font-mono text-xs">${esc(c.meta_campaign_id)}</span>` : "not created")}
             ${row("Ad set", c.meta_adset_id ? `<span class="font-mono text-xs">${esc(c.meta_adset_id)}</span>` : "—")}
             ${row("Ad", c.meta_ad_id ? `<span class="font-mono text-xs">${esc(c.meta_ad_id)}</span>` : "—")}
+            ${row("Mode", c.meta_mode === "dry_run" ? '<span class="text-warn">Dry run (fake ids, not on Meta)</span>' : c.meta_mode === "live" ? "Live on Meta" : "—")}
             <p class="pt-2 text-xs text-muted">Milo's tools can only request changes. Publishing, pausing and budget changes run only after you approve them.</p>
           </div>
           <div class="card p-4 text-sm">
@@ -844,6 +868,11 @@
             <div class="mt-2 flex flex-wrap justify-between gap-2 text-xs text-muted">
               <span>CTA · ${esc(CTA[c.call_to_action] || c.call_to_action)}</span>
               <a href="${esc(c.link_url)}" target="_blank" rel="noreferrer" class="max-w-[60%] truncate text-accent hover:underline">${esc((c.link_url || "").replace(/^https?:\/\//, ""))}</a>
+            </div>
+            <div class="mt-3 border-t border-line pt-3">
+              <div class="mb-2 flex items-center justify-between gap-2"><span class="text-xs text-subtle">Ad image ${(c.platforms || []).includes("instagram") ? "· required for Instagram" : "· optional"}</span>
+                ${c.meta_creative_id ? "" : `<div class="flex gap-2"><button class="rounded-lg border border-line px-3 py-1.5 text-xs hover:bg-accent-soft" data-generate-image="${c.id}" title="AI image: FLUX.1 [schnell] on Cloudflare Workers AI">✨ Generate image</button><label class="cursor-pointer rounded-lg border border-line px-3 py-1.5 text-xs hover:bg-accent-soft">${c.image_path ? "Replace image" : "Upload ad image"}<input type="file" accept="image/png,image/jpeg" class="hidden" data-image-upload="${c.id}"></label></div>`}</div>
+              ${c.image_path ? `<img src="/api/campaigns/${c.id}/image?v=${encodeURIComponent(c.meta_image_hash || c.image_path)}" alt="Ad image" class="max-h-48 rounded-lg border border-line">` : `<p class="text-xs text-muted">No image yet. JPG or PNG, up to 8 MB; square 1080×1080 works on Facebook and Instagram.</p>`}
             </div>
           </div>
           <div class="card p-4 text-sm">
@@ -862,7 +891,7 @@
         </div>
         <div class="card mt-4 p-4">
           <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div><h2 class="font-display text-base font-medium">Ad preview</h2><p class="text-xs text-muted">Milo's mock-up of the ad, or Meta's own rendering (Meta tabs; needs you logged in to Facebook in this browser). Sandbox ads are never shown to real people.</p></div>
+            <div><h2 class="font-display text-base font-medium">Ad preview</h2><p class="text-xs text-muted">Milo's mock-up of the ad, or Meta's own rendering (Meta tabs; needs you logged in to Facebook in this browser). While spending is off, ads stay paused and are shown to no one.</p></div>
             <div id="previewTabs" class="flex flex-wrap gap-1"></div>
           </div>
           <div id="previewBox" class="grid min-h-[120px] place-items-center rounded-lg bg-bg p-3 text-sm text-muted">Loading preview…</div>
@@ -888,7 +917,7 @@
       <div class="flex items-center gap-2 p-3"><div class="grid size-9 place-items-center rounded-full bg-accent text-accent-fg">${esc(page.charAt(0))}</div>
         <div><div class="font-semibold">${esc(page)}</div><div class="text-[11px] text-[#65676b]">Sponsored · 🌐</div></div></div>
       <p class="whitespace-pre-wrap px-3 pb-2">${esc(c.primary_text)}</p>
-      <div class="grid aspect-[1.91/1] place-items-center bg-gradient-to-br from-[#f3e3c7] to-[#e7eef1] px-6 text-center font-display text-xl text-ink">${esc(c.headline)}</div>
+      ${c.image_path ? `<img src="/api/campaigns/${c.id}/image" alt="" class="aspect-square w-full object-cover">` : `<div class="grid aspect-[1.91/1] place-items-center bg-gradient-to-br from-[#f3e3c7] to-[#e7eef1] px-6 text-center font-display text-xl text-ink">${esc(c.headline)}</div>`}
       <div class="flex items-center justify-between gap-3 bg-[#f0f2f5] px-3 py-2.5"><div class="min-w-0"><div class="truncate text-[11px] uppercase text-[#65676b]">${esc(host)}</div><div class="truncate font-semibold">${esc(c.headline)}</div></div>
         <span class="shrink-0 rounded-md bg-[#e4e6eb] px-3 py-1.5 font-semibold">${esc(CTA[c.call_to_action] || c.call_to_action)}</span></div>
     </div>
@@ -980,7 +1009,7 @@
       const [summary, campaigns] = await Promise.all([api("/api/summary"), api("/api/campaigns")]);
       const t = summary.totals_7d;
       $("analyticsSource").classList.toggle("hidden", !summary.metrics_source);
-      $("analyticsSource").textContent = summary.metrics_source === "simulated" ? "Simulated metrics (sandbox ads don't deliver)" : "Real Meta Insights";
+      $("analyticsSource").textContent = summary.metrics_source === "simulated" ? "Simulated demo metrics (dry run)" : "Real Meta Insights";
       const live = campaigns.filter((c) => c.status === "active" || c.status === "paused");
       const per = await Promise.all(live.map(async (c) => {
         const m = await api(`/api/campaigns/${c.id}/metrics`).catch(() => ({ daily: [] }));
@@ -1029,6 +1058,10 @@
     optimizer_run: ["Optimizer checked campaigns", "text-accent"],
     web_research: ["Milo researched the web", "text-ink"],
     landing_page_read: ["Milo read a landing page", "text-ink"],
+    image_uploaded: ["Ad image uploaded", "text-ink"],
+    image_generated: ["Ad image generated (FLUX.1 schnell)", "text-ink"],
+    approval_updated: ["Waiting request updated", "text-warn"],
+    metrics_failed: ["Metrics pull failed", "text-danger"],
   };
   const ACTION_WORDS = { publish_campaign: "publish", pause_campaign: "pause", update_budget: "budget change", request_publish: "publish", request_pause: "pause", request_budget_change: "budget change" };
   function activityRow(e) {
@@ -1038,6 +1071,8 @@
     const bits = [
       ACTION_WORDS[d.action || d.tool],
       d.source === "optimizer" ? "by optimizer" : null,
+      d.mode === "dry_run" ? "dry run (not sent to Meta)" : null,
+      d.campaign_status === "paused" && d.action === "publish_campaign" ? "created paused (spending off)" : null,
       d.approval_id ? `approval #${d.approval_id}` : null,
       e.event === "optimizer_run" ? `${d.checked} checked · ${d.recommended} recommended` : null,
       e.event === "web_research" ? `"${d.query || d.topic || ""}" · ${d.results ?? d.sources ?? 0} sources${d.status && d.status !== "ok" ? ` · ${d.status}` : ""}` : null,
@@ -1075,8 +1110,12 @@
             ${check(s.llm_key_set, "AI model", s.llm_key_set ? `Using ${esc(s.model)}` : "Add OPENROUTER_API_KEY to .env to turn chat on.")}
             ${check(s.meta_configured, "Meta ad account", s.meta_configured ? `Token, ad account and Page set · Marketing API ${esc(s.meta_api_version)}` : "Add META_ACCESS_TOKEN, META_AD_ACCOUNT_ID and META_PAGE_ID to .env.")}
             ${check(!s.meta_dry_run, "Live Meta calls", s.meta_dry_run ? "Dry run is on: approved actions are logged, not sent to Meta." : "Approved actions are sent to Meta.")}
+            ${check(true, "Spending", s.meta_dry_run ? "Dry run: nothing can spend." : s.spend.allowed ? `ALLOWED (META_ALLOW_SPEND=true). Caps: ${inr(s.spend.max_daily_budget_inr)}/day per campaign, ${inr(s.spend.max_total_daily_budget_inr)}/day in total. Running now: ${inr(s.spend.live_daily_budget_inr)}/day.` : `Off (META_ALLOW_SPEND=false): publishing creates campaigns on Meta but keeps them paused, so nothing is charged. Cap ${inr(s.spend.max_daily_budget_inr)}/day per campaign.`)}
+            ${s.image_generation ? check(s.image_generation.configured, "Ad image generation", s.image_generation.configured ? `FLUX.1 [schnell] on Cloudflare Workers AI (${esc(s.image_generation.model)}). Used today: ${s.image_generation.used_today} of ${s.image_generation.daily_limit} (IMAGE_DAILY_LIMIT).` : "Add CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN to .env (free Workers AI account). Without them, upload images yourself.") : ""}
+            ${check(s.instagram_account_set || s.meta_dry_run, "Instagram", s.instagram_account_set ? "Instagram account set (META_INSTAGRAM_ACCOUNT_ID)." : "Found automatically from the Page's linked Instagram account at publish time; set META_INSTAGRAM_ACCOUNT_ID to fix it.")}
+            ${check(s.database_ok, "Database (MongoDB)", s.database_ok ? "Connected. Campaigns, approvals, metrics and activity are stored there." : `Not reachable: ${esc(s.database_error)}. Check MONGODB_URI in .env and that your IP is allowed in Atlas (Network Access).`)}
             ${s.research ? check(s.research.enabled && s.research.key_set, "Web research (Tavily)", !s.research.enabled ? "Turned off (RESEARCH_ENABLED=false). Milo writes copy without research." : s.research.key_set ? `Recent context from the past ${esc(s.research.time_range)}, up to ${s.research.max_results} sources per search.` : "Add TAVILY_API_KEY to .env (free: 1,000 credits/month). Without it Milo writes copy unresearched.") : ""}
-            ${check(s.metrics_provider === "meta", "Metrics source", s.metrics_provider === "meta" ? `Real Meta Insights every ${s.metrics_poll_minutes} min.` : `Simulated (sandbox ads don't deliver), refreshed every ${s.metrics_poll_minutes} min.`)}
+            ${check(s.metrics_provider === "meta", "Metrics source", s.metrics_provider === "meta" ? `Real Meta Insights every ${s.metrics_poll_minutes} min (paused ads have no new results).` : `Simulated demo data (dry run), refreshed every ${s.metrics_poll_minutes} min.`)}
           </ul>
         </div>
         <div class="flex flex-col gap-4">
@@ -1129,6 +1168,19 @@
   }
   function refreshCurrent() { route(); }
 
+  // Ad image upload (campaign page)
+  document.body.addEventListener("change", async (e) => {
+    const input = e.target.closest("[data-image-upload]");
+    if (!input || !input.files || !input.files[0]) return;
+    const fd = new FormData();
+    fd.append("file", input.files[0]);
+    try {
+      await api(`/api/campaigns/${input.dataset.imageUpload}/image`, { method: "POST", body: fd });
+      toast("Ad image uploaded");
+      refreshCurrent();
+    } catch (err) { toast(err.message, "error"); }
+  });
+
   document.body.addEventListener("click", (e) => {
     const t = (sel) => e.target.closest(sel);
     let el;
@@ -1145,6 +1197,20 @@
     if ((el = t("[data-tab]"))) { state.approvalTab = el.dataset.tab; return renderApprovals(); }
     if ((el = t("[data-retry]"))) return refreshCurrent();
     if ((el = t("[data-preview]"))) return loadPreview(el.dataset.cid, el.dataset.preview);
+    if ((el = t("[data-generate-image]"))) {
+      const cid = el.dataset.generateImage;
+      return confirmDialog({
+        title: "Generate an ad image?",
+        body: "FLUX.1 [schnell] on Cloudflare Workers AI creates a square photo for this draft. It replaces the current image and is not sent to Meta until you approve publishing. Describe the scene, or leave empty to use the ad copy.",
+        ok: "Generate",
+        extra: `<textarea id="imgPrompt" rows="3" maxlength="600" class="mt-3 w-full rounded-lg border border-line bg-surface p-2 text-sm" placeholder="e.g. juicy burger and pink milkshake on a wooden cafe table, warm evening light"></textarea><p class="mt-1 text-xs text-muted">No text, prices or logos: image models misspell words, and the ad's text carries the message.</p>`,
+        onOk: async () => {
+          await post(`/api/campaigns/${cid}/generate-image`, { prompt: ($("imgPrompt") || {}).value || "" });
+          toast("Ad image generated");
+          refreshCurrent();
+        },
+      });
+    }
     if ((el = t("[data-run-optimizer]"))) return runOptimizer(el);
     if ((el = t("[data-request]"))) {
       const kind = el.dataset.request, label = kind === "pause" ? "Pause" : "Publish";

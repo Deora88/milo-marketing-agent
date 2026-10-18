@@ -1,7 +1,8 @@
 # Milo — Tech Stack
 
 Milo is a conversational AI agent that creates, approves, publishes and monitors **Meta (Facebook + Instagram)** ad
-campaigns. The whole stack runs at **zero cost**: free LLM models, a free Meta sandbox ad account, and local SQLite.
+campaigns on a **live Meta business ad account**. The software stack is free: free LLM models, MongoDB Atlas free tier,
+and spending on Meta is **off by default** (campaigns are created paused until the account owner enables spend).
 
 ## At a glance
 
@@ -15,15 +16,16 @@ campaigns. The whole stack runs at **zero cost**: free LLM models, a free Meta s
 | Backend API | FastAPI + Pydantic | ≥ 0.115 | Async, typed, auto-docs at `/docs`; serves the dashboard too |
 | Server | Uvicorn | ≥ 0.30 | ASGI server for FastAPI |
 | Chat streaming | Server-Sent Events (`sse-starlette`) + ADK `StreamingMode.SSE` | ≥ 2.1 | Replies appear as they are written; tool steps and approval cards stream too; model reasoning is filtered out |
-| Ads platform | Meta Marketing API (Graph API) | **v26.0** | Free sandbox ad account, self-serve access, best documented ads API |
+| Ads platform | Meta Marketing API (Graph API) | **v26.0** | One API for Facebook and Instagram ads; business system-user tokens; best documented ads API |
 | HTTP client | httpx | ≥ 0.27 | Async; lets us read Meta's rate-limit headers directly; mockable with respx |
-| Database | SQLite + SQLModel | SQLModel ≥ 0.0.22 | Zero setup; SQLModel = SQLAlchemy + Pydantic in one model; Postgres-ready |
+| Database | MongoDB (Atlas free M0) + PyMongo | PyMongo ≥ 4.8 | Shared by the team in the cloud; documents fit campaigns/approvals naturally; atomic `find_one_and_update` for the approval claim; tests use `mongomock` |
 | Background jobs | APScheduler (AsyncIOScheduler) | 3.x | In-process 15-minute metrics pull + optimizer run; no Redis/Celery needed |
 | Optimization | Rule engine (`app/optimizer.py`) | — | Deterministic, explainable recommendations filed as approvals; no LLM cost |
+| Ad image generation | **FLUX.1 [schnell]** (Black Forest Labs) on **Cloudflare Workers AI**, model id `@cf/black-forest-labs/flux-1-schnell` | REST, 4 steps, 1024×1024 | Free daily allowance (10,000 neurons ≈ 150+ images), fast, Apache-2.0 licence allows ad use; called with httpx and mocked with respx in tests |
 | Ad research | Tavily Search + Extract API (via httpx) | REST | Recent web context for ad copy (`time_range`, published dates), built for LLM agents; free 1,000 credits/month; optional |
 | Config & secrets | pydantic-settings + `.env` | ≥ 2.4 | Typed settings; secrets never reach the browser |
 | Frontend | Single-file HTML + vanilla JS, Tailwind CSS (prebuilt `web/milo.css`), hand-drawn SVG charts | Tailwind 3 (build only) | Served by FastAPI at `/` — same origin as the API, so no CORS, no hosting, no Node at runtime. Design: warm paper palette, Fraunces + Outfit |
-| Testing | pytest + pytest-asyncio + respx | — | Tests the MCP tools, approval rules, HTTP API, chat streaming, optimizer, Meta and Tavily clients without calling the LLM, Meta or Tavily |
+| Testing | pytest + pytest-asyncio + respx + mongomock | — | 77 tests: MCP tools, approval gate (incl. CSRF, double approve, failures), HTTP API, chat streaming, optimizer, Meta, Tavily and Cloudflare image clients, without calling the LLM, Meta, Tavily, Cloudflare or a real database |
 | Packaging | uv | — | Fast installs and a lockfile (`uv.lock`) for reproducible setup |
 
 ## Key decisions
@@ -32,6 +34,8 @@ campaigns. The whole stack runs at **zero cost**: free LLM models, a free Meta s
 Meta was the only platform that gives a **free sandbox ad account** (no payment method, ads never run) with
 **self-serve API access** to accounts you own. Pinterest and TikTok were runners-up; LinkedIn, Reddit and X need
 approval or have no test environment. Full comparison: *Milo — Platform Research* doc.
+Development started on that sandbox; the project now runs on the team's live Meta business account, which also
+covers Instagram through the same API.
 
 ### 2. Google ADK as the agent harness
 - `LlmAgent` = the agent loop; its tools come from the MCP server through `McpToolset`.
@@ -65,10 +69,21 @@ workflows and add another service to run. It is listed as optional future work f
   can't mock.
 - `META_DRY_RUN=true` returns fake IDs, so development never touches Meta.
 
-### 5. Simulated metrics for the sandbox
-Meta's sandbox ad accounts **return no Insights** (ads never deliver). `SimulatedInsightsProvider` returns the same
-shape as real Insights — deterministic per campaign and date, scaled by budget — and the UI labels it "simulated".
-Switching to real data is `METRICS_PROVIDER=meta`.
+### 5. Live account with spend switched off by default
+- The team moved from a sandbox to a **live business ad account** (Facebook + Instagram). To avoid spending company
+  money by accident, `META_ALLOW_SPEND=false` is the default: Approve creates the campaign, ad set, creative and ad
+  on Meta but keeps them **PAUSED**, so nothing delivers and nothing is charged. Resuming is refused until the owner
+  sets `META_ALLOW_SPEND=true`.
+- Hard caps on every budget (`MAX_DAILY_BUDGET_INR` per campaign, `MAX_TOTAL_DAILY_BUDGET_INR` overall) are checked
+  when a change is requested and again when it is executed, for Milo, the UI buttons and the optimizer alike.
+- Metrics come from real Insights (`METRICS_PROVIDER=meta`). Dry run uses `SimulatedInsightsProvider`, which only
+  counts running campaigns from their creation date, and every optimizer reason based on it says so.
+
+### 5b. Facebook + Instagram in one ad set
+- One ad set with `publisher_platforms` = the chosen apps; Meta picks the positions (Feed, Stories, Reels).
+- The creative carries the Page and the linked Instagram account (`instagram_user_id`, the v22+ replacement for
+  `instagram_actor_id`), found from the Page's `instagram_business_account` or set in `.env`.
+- Instagram needs a picture, so campaigns have an ad image (uploaded in the UI, sent to `/adimages`, used by hash).
 
 ### 6. Frontend served by the backend (and why not Apper or a React app)
 - `web/index.html` is one file of HTML + vanilla JS, served by FastAPI at `/`. Same origin as the API, so no CORS,
@@ -107,9 +122,27 @@ Switching to real data is `METRICS_PROVIDER=meta`.
 - Rejected: **Google Trends API** (alpha, invite-only), **pytrends** (unofficial, archived April 2025),
   **Meta Ad Library API** (outside the EU it only returns political/issue ads, not ordinary commercial ads).
 
-### 9. SQLite + APScheduler instead of Postgres + Celery
-One process, one file, no extra services. Good for a single-user evaluation project; SQLModel lets us move to
-Postgres by changing `DATABASE_URL`.
+### 8b. FLUX.1 [schnell] on Cloudflare Workers AI for ad images
+- Instagram ads need a picture, so Milo can generate one: `app/creative/imagegen.py` calls
+  `@cf/black-forest-labs/flux-1-schnell` (FLUX.1 [schnell], Black Forest Labs, Apache-2.0) through the Workers AI
+  REST API and saves the JPEG as the draft's ad image. The agent tool is `generate_ad_image`; the UI has
+  **✨ Generate image**.
+- Why this model: it is the free option that works today. Workers AI includes 10,000 neurons per day and one 4-step
+  1024×1024 image costs about 58, so roughly 150+ images a day; `IMAGE_DAILY_LIMIT` (default 40) keeps Milo well inside.
+  Google's Gemini image models ("Nano Banana") have no free API tier as of October 2026 (about $0.03–0.13 per
+  image); Hugging Face's free inference is heavily rate-limited; OpenRouter image models are paid.
+- Every prompt asks for a photo with **no text, letters or logos**: image models misspell words, and Meta shows the
+  ad's text, headline and button anyway.
+- The approval gate is unchanged: a generated image only changes the draft, and reaches Meta when publishing is approved.
+- The model is a setting (`IMAGE_MODEL`); newer Workers AI image models (for example FLUX.2) can be tried there,
+  but they use different pricing units, so check the free allowance first.
+
+### 9. MongoDB Atlas + APScheduler instead of a SQL database + Celery
+- MongoDB Atlas (free M0) lets the team share one database in the cloud with no server to run. The web server and
+  the MCP server (separate processes) use the same database.
+- A small data layer (`app/db/store.py`) keeps readable sequential ids (`counters` collection) and provides an
+  atomic `claim()` (find-one-and-update), which makes Approve safe against double clicks.
+- APScheduler runs in-process: no Redis or Celery needed.
 
 ## Environment variables
 
@@ -118,14 +151,27 @@ Postgres by changing `DATABASE_URL`.
 | `OPENROUTER_API_KEY` | — | OpenRouter key (required for chat) |
 | `MILO_MODEL` | `openrouter/openrouter/free` | LiteLLM model string |
 | `META_API_VERSION` | `v26.0` | Pinned Graph API version |
-| `META_ACCESS_TOKEN` | — | System user token with `ads_management`, `ads_read` |
-| `META_AD_ACCOUNT_ID` | — | Sandbox ad account id (digits; an `act_` prefix is also accepted) |
+| `META_ACCESS_TOKEN` | — | Business system-user token: `ads_management`, `ads_read`, `pages_read_engagement`, `pages_show_list`, `instagram_basic`, `business_management` |
+| `META_AD_ACCOUNT_ID` | — | Ad account id (digits; an `act_` prefix is also accepted) |
 | `META_PAGE_ID` | — | Facebook Page the ads run under |
-| `META_PAGE_POST_ID` | — | Optional: boost an existing Page post instead of creating a new ad post (needed while the Meta app is in Development mode, which blocks app-created ad posts — error 1885183) |
+| `META_INSTAGRAM_ACCOUNT_ID` | auto | Instagram account linked to the Page (found from the Page if empty) |
+| `META_PAGE_POST_ID` | — | Optional: boost an existing Page post instead of Milo's own ad copy |
 | `META_DRY_RUN` | `true` | `true` = never call Meta |
-| `METRICS_PROVIDER` | `simulated` | `simulated` or `meta` |
+| `META_ALLOW_SPEND` | `false` | `false` = campaigns are created on Meta but stay paused (no charge); resume refused |
+| `MAX_DAILY_BUDGET_INR` | `500` | Hard cap per campaign, every request |
+| `MAX_TOTAL_DAILY_BUDGET_INR` | `1000` | Hard cap across running campaigns |
+| `METRICS_PROVIDER` | `meta` | `meta` or `simulated` (dry run always uses simulated) |
 | `METRICS_POLL_MINUTES` | `15` | Metrics pull interval |
-| `DATABASE_URL` | `sqlite:///./milo.db` | Database location |
+| `MONGODB_URI` | `mongodb://localhost:27017` | MongoDB connection string (Atlas `mongodb+srv://…`) |
+| `MONGODB_DB` | `milo` | Database name |
+| `ALLOWED_HOSTS` | `localhost,127.0.0.1` | Host names the server answers to (blocks DNS rebinding) |
+| `API_TOKEN` | — | If set, every `/api` request needs `Authorization: Bearer <token>` |
+| `CLOUDFLARE_ACCOUNT_ID` | — | Cloudflare account for Workers AI (ad images) |
+| `CLOUDFLARE_API_TOKEN` | — | Workers AI token (Read + Edit) |
+| `IMAGE_MODEL` | `@cf/black-forest-labs/flux-1-schnell` | Image model: FLUX.1 [schnell] on Cloudflare Workers AI |
+| `IMAGE_STEPS` | `4` | Diffusion steps (1–8) |
+| `IMAGE_DAILY_LIMIT` | `40` | Milo's own cap on generated images per day |
+| `MILO_ENV_FILE` | `.env` | Which env file to read; tests set it to empty so a personal `.env` never affects them |
 | `OPTIMIZER_ENABLED` | `true` | Run the optimizer after each metrics pull |
 | `OPTIMIZER_*` thresholds | see `.env.example` | Min impressions, pause / scale / trim ratios, budget step, max budget, cooldown |
 | `TAVILY_API_KEY` | — | Tavily key for ad research (optional; without it copy is written unresearched) |
@@ -139,8 +185,9 @@ Postgres by changing `DATABASE_URL`.
 | Limit | Value | How Milo handles it |
 | --- | --- | --- |
 | OpenRouter free requests | 20/min, 50/day | Code does validation, approvals, metrics; LLM only for conversation. Pin a fast non-reasoning `:free` model for quicker replies |
-| Meta `ads_management` (dev tier) | 300 + 40 × active ads per hour per ad account | Throttled client, slows down above 75% usage, backoff on codes 4/17/613/80000–80014 |
-| Meta `ads_insights` (dev tier) | 600 + 400 × active ads per hour | Metrics cached in SQLite, pulled every 15 min |
+| Meta `ads_management` (standard access) | 300 + 40 × active ads per hour per ad account | Throttled client, slows down above 75% usage, backoff on codes 4/17/613/80000–80014 |
+| Meta `ads_insights` (standard access) | 600 + 400 × active ads per hour | Metrics stored in MongoDB, pulled every 15 min, all pages followed |
 | Meta ad set budget changes | 4 per hour per ad set | Budget changes go through approval; the optimizer recommends at most one change per campaign per 6 h |
-| Meta sandbox | No delivery, no Insights, one account per app | Dry-run mode + simulated metrics |
+| Live ad account spend | Real money once ads deliver | `META_ALLOW_SPEND=false` by default (everything paused) + per-campaign and total daily caps |
+| Cloudflare Workers AI free plan | 10,000 neurons/day (FLUX.1 [schnell] ≈ 58 per image) | `IMAGE_DAILY_LIMIT` (default 40/day); clear message when the allowance is used up; upload always works |
 | Tavily free plan | 1,000 credits/month | One basic search (1 credit) per campaign idea; research is optional and each call is logged |

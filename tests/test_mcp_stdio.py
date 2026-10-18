@@ -27,7 +27,8 @@ async def test_mcp_server_over_stdio():
 
             draft = _json(await session.call_tool("create_campaign_draft", {
                 "name": "MCP test", "daily_budget_inr": 300, "countries": ["IN"], "age_min": 18, "age_max": 35,
-                "headline": "Hello", "primary_text": "World", "link_url": "https://example.com"}))
+                "headline": "Hello", "primary_text": "World", "link_url": "https://example.com",
+                "platforms": ["facebook"]}))
             assert draft["status"] == "draft_saved"
 
             req = _json(await session.call_tool("request_publish", {"campaign_id": draft["campaign_id"]}))

@@ -12,11 +12,9 @@ from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
-from sqlmodel import Session, func, select
-
 from app.agent.agent import build_agent
+from app.db import store
 from app.db.models import Approval
-from app.db.session import engine
 
 log = logging.getLogger("milo.chat")
 APP_NAME = "milo"
@@ -41,14 +39,24 @@ async def ensure_session(session_id: str) -> None:
 
 
 def _max_approval_id() -> int:
-    with Session(engine) as s:
-        return s.exec(select(func.max(Approval.id))).one() or 0
+    last = store.find(Approval, sort=[("_id", -1)], limit=1)
+    return last[0].id if last else 0
 
 
-def _new_pending(after_id: int, seen: set[int]) -> list[Approval]:
-    with Session(engine) as s:
-        rows = s.exec(select(Approval).where(Approval.id > after_id, Approval.status == "pending")).all()
-        return [a for a in rows if a.id not in seen]
+def _new_pending(after_id: int, seen: set[int], ids: set[int] | None = None) -> list[Approval]:
+    """Approvals this chat turn created: new since the turn started and named in this turn's tool results
+    (so optimizer or UI requests filed at the same moment are not shown as if Milo made them)."""
+    rows = store.find(Approval, {"_id": {"$gt": after_id}, "status": "pending"})
+    return [a for a in rows if a.id not in seen and (ids is None or a.id in ids)]
+
+
+def _approval_ids(result) -> set[int]:
+    """approval_id values mentioned in an MCP tool result (dict, or wrapped as text content)."""
+    import json
+    import re
+
+    text = result if isinstance(result, str) else json.dumps(result, default=str)
+    return {int(x) for x in re.findall(r'approval_id\\?"?\s*[:=]\s*\\?"?(\d+)', text)}
 
 
 async def chat_turn(session_id: str, text: str) -> AsyncIterator[dict]:
@@ -71,8 +79,8 @@ async def chat_turn(session_id: str, text: str) -> AsyncIterator[dict]:
             elif part.function_response:
                 yield {"type": "tool_result", "name": part.function_response.name,
                        "result": part.function_response.response or {}}
-                # Approvals are created inside the MCP server process; pick up new ones from the DB.
-                for a in _new_pending(start_id, seen):
+                # Approvals are created inside the MCP server process; pick up the ones this turn created.
+                for a in _new_pending(start_id, seen, _approval_ids(part.function_response.response or {})):
                     seen.add(a.id)
                     yield {"type": "approval", "approval_id": a.id, "summary": a.summary, "action": a.action,
                            "source": a.source, "reason": a.reason}

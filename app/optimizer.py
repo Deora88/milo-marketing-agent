@@ -9,14 +9,18 @@ so nothing changes on Meta until a human clicks Approve. The rules are determini
   * trim       - cost per click well above average -> -step% budget
 """
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-
-from sqlmodel import Session, select
+from datetime import date, datetime, timedelta, timezone
 
 from app.approvals import create_approval
 from app.config import Settings, get_settings
+from app.db import store
 from app.db.models import Approval, Campaign, MetricSnapshot
-from app.db.session import audit
+
+WINDOW_DAYS = 7
+
+
+def window_start() -> str:
+    return (date.today() - timedelta(days=WINDOW_DAYS - 1)).isoformat()
 
 
 @dataclass
@@ -28,6 +32,7 @@ class CampaignStats:
     spend: float
     impressions: int
     clicks: int
+    simulated: bool = False
 
     @property
     def ctr(self) -> float:
@@ -66,7 +71,8 @@ def analyze(stats: list[CampaignStats], s: Settings) -> list[Recommendation]:
     recs: list[Recommendation] = []
 
     def facts(x: CampaignStats) -> str:
-        return f"Last 7 days: {x.impressions:,} impressions, {x.clicks:,} clicks, Rs {x.spend:,.0f} spent."
+        sim = " (based on simulated data, not real Meta results)" if x.simulated else ""
+        return f"Last 7 days: {x.impressions:,} impressions, {x.clicks:,} clicks, Rs {x.spend:,.0f} spent{sim}."
 
     if len(eligible) == 1:
         x = eligible[0]
@@ -83,7 +89,7 @@ def analyze(stats: list[CampaignStats], s: Settings) -> list[Recommendation]:
                 f"CTR {x.ctr:.2f}% is {gap:.0f}% below the account average of {avg_ctr:.2f}%. {facts(x)}",
             ))
         elif x.ctr >= s.optimizer_scale_ctr_ratio * avg_ctr and x.cpc <= avg_cpc:
-            new_budget = min(_round_budget(x.daily_budget_inr * (1 + step)), s.optimizer_max_daily_budget_inr)
+            new_budget = min(_round_budget(x.daily_budget_inr * (1 + step)), s.max_daily_budget_inr)
             if new_budget > x.daily_budget_inr:
                 recs.append(Recommendation(
                     x.campaign_id, "update_budget",
@@ -103,24 +109,23 @@ def analyze(stats: list[CampaignStats], s: Settings) -> list[Recommendation]:
     return recs
 
 
-def collect_stats(session: Session) -> list[CampaignStats]:
-    campaigns = session.exec(select(Campaign).where(Campaign.status.in_(["active", "paused"]))).all()
+def collect_stats() -> list[CampaignStats]:
     out = []
-    for c in campaigns:
-        rows = session.exec(select(MetricSnapshot).where(MetricSnapshot.campaign_id == c.id)).all()
+    for c in store.find(Campaign, {"status": {"$in": ["active", "paused"]}}):
+        rows = store.find(MetricSnapshot, {"campaign_id": c.id, "date": {"$gte": window_start()}})
         out.append(CampaignStats(
             campaign_id=c.id, name=c.name, status=c.status, daily_budget_inr=c.daily_budget / 100,
-            spend=sum(r.spend for r in rows), impressions=sum(r.impressions for r in rows), clicks=sum(r.clicks for r in rows),
+            spend=sum(r.spend for r in rows), impressions=sum(r.impressions for r in rows),
+            clicks=sum(r.clicks for r in rows), simulated=any(r.source == "simulated" for r in rows),
         ))
     return out
 
 
-def _cooling_down(session: Session, campaign_id: int, action: str, s: Settings) -> str | None:
+def _cooling_down(campaign_id: int, action: str, s: Settings) -> str | None:
     now = datetime.now(timezone.utc)
-    rows = session.exec(select(Approval).where(Approval.campaign_id == campaign_id)).all()
-    for a in rows:
-        created = a.created_at if a.created_at.tzinfo else a.created_at.replace(tzinfo=timezone.utc)
-        if a.status == "pending":
+    for a in store.find(Approval, {"campaign_id": campaign_id}):
+        created = a.created_at
+        if a.status in ("pending", "executing"):
             return "a request is already waiting for approval"
         if a.source == "optimizer" and now - created < timedelta(hours=s.optimizer_cooldown_hours):
             return f"recommended within the last {s.optimizer_cooldown_hours}h"
@@ -129,21 +134,20 @@ def _cooling_down(session: Session, campaign_id: int, action: str, s: Settings) 
     return None
 
 
-def run_optimizer(session: Session, settings: Settings | None = None) -> dict:
+def run_optimizer(settings: Settings | None = None) -> dict:
     s = settings or get_settings()
-    stats = collect_stats(session)
+    stats = collect_stats()
     created, skipped = [], []
     for rec in analyze(stats, s):
-        why_not = _cooling_down(session, rec.campaign_id, rec.action, s)
+        why_not = _cooling_down(rec.campaign_id, rec.action, s)
         if why_not:
             skipped.append({"campaign_id": rec.campaign_id, "action": rec.action, "why": why_not})
             continue
-        result = create_approval(session, rec.action, rec.campaign_id, rec.payload, reason=rec.reason, source="optimizer")
+        result = create_approval(rec.action, rec.campaign_id, rec.payload, reason=rec.reason, source="optimizer")
         if result["status"] == "pending_approval":
             created.append({"campaign_id": rec.campaign_id, "approval_id": result["approval_id"],
                             "summary": result["summary"], "reason": rec.reason})
         else:
             skipped.append({"campaign_id": rec.campaign_id, "action": rec.action, "why": result.get("message", "")})
-    audit(session, "optimizer_run", checked=len(stats), recommended=len(created), skipped=len(skipped))
-    session.commit()
+    store.audit("optimizer_run", checked=len(stats), recommended=len(created), skipped=len(skipped))
     return {"checked": len(stats), "recommendations": created, "skipped": skipped}
