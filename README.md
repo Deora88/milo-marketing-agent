@@ -24,7 +24,7 @@ cp .env.example .env         # MONGODB_URI + OPENROUTER_API_KEY (+ optional TAVI
                              # while META_DRY_RUN=true
 uv run uvicorn app.main:app --reload
 # open http://localhost:8000
-uv run pytest                # 77 tests, in-memory MongoDB; ignores your .env; never calls the LLM, Meta or Tavily
+uv run pytest                # 85 tests, in-memory MongoDB; ignores your .env; never calls the LLM, Meta or Tavily
 ```
 No `uv`? `pip install uv` first (Windows: `python -m pip install uv`).
 
@@ -72,7 +72,7 @@ app/
 web/
   index.html         the Milo UI (single file, served at /)
   milo.css           prebuilt Tailwind styles; tokens in tailwind.config.js
-tests/               77 tests: MCP tools + approval gate (caps, spend switch, CSRF, double approve, failures), MCP over
+tests/               85 tests: MCP tools + approval gate (caps, spend switch, CSRF, double approve, failures), MCP over
                      stdio, HTTP API, chat streaming, Meta client + campaign builder, previews, optimizer, research, image generation
                      (in-memory MongoDB via mongomock, HTTP mocked with respx; a personal .env is ignored)
 ```
@@ -100,6 +100,9 @@ tests/               77 tests: MCP tools + approval gate (caps, spend switch, CS
   can't add it, so it can't press Approve for you (CSRF).
 - Approve is atomic: the approval moves from pending to executing in one database step, so a double click, a
   second tab or a concurrent reject can't run it twice.
+- Stuck approvals recover: if the server stops while an approval is executing, it goes back to pending at the next
+  startup, and the scheduler also resets any approval executing for more than `APPROVAL_TIMEOUT_MINUTES` (default
+  10). Activity logs `approval_recovered`. Approving again is safe: publishing resumes from the saved Meta ids.
 - Optional `API_TOKEN`: every `/api` request then needs `Authorization: Bearer <token>` (use this if Milo is ever
   reachable beyond localhost). Error messages shown in the UI have tokens and keys masked.
 
@@ -132,6 +135,16 @@ Instagram ads need a picture. Milo can create it, or you upload your own (JPG/PN
   publishing, and can't be changed once the ad exists on Meta. Every generation is logged in Activity.
 - **Setup:** `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` (Workers AI Read + Edit) in `.env`. Without them the
   button shows how to set it up and Milo asks you to upload an image instead.
+
+## Click-to-Messenger ads (chat with customers)
+- **What:** `destination="messenger"` makes the ad's button **Send message**: a click opens a Messenger chat with the
+  Page instead of a website. Ask Milo for an ad where "people can message us".
+- **On Meta:** campaign objective `OUTCOME_ENGAGEMENT`, ad set `destination_type=MESSENGER` with optimisation goal
+  `CONVERSATIONS`, placements Facebook + Messenger (Instagram is left out), creative button `MESSAGE_PAGE` and an
+  optional welcome message (max 300 characters). Built from Meta's Click to Messenger guide; unit-tested, not yet run
+  against the live account.
+- **Who answers:** the Page's own automated replies (Meta Business Suite > Inbox > Automations: instant reply,
+  frequently asked questions, away message). Free, no extra server; Milo doesn't read or send messages.
 
 ## Ad research (web search)
 When you describe what to promote ("a bakery in Pune"), Milo calls `research_topic` once with the business and
@@ -183,7 +196,7 @@ Milo's tools live in an MCP server, so any MCP client can use them. The ADK agen
 
 | Tool | What it does |
 | --- | --- |
-| `create_campaign_draft` | Validates and saves a draft; platforms (Facebook and/or Instagram), countries or a local area (place + latitude/longitude + 1–80 km radius), budget within the cap |
+| `create_campaign_draft` | Validates and saves a draft; platforms (Facebook and/or Instagram), destination (website or Messenger chat), countries or a local area (place + latitude/longitude + 1–80 km radius), budget within the cap |
 | `list_campaigns` | Lists campaigns |
 | `get_campaign_metrics` | Daily spend, impressions, clicks, CTR, CPC |
 | `request_publish` / `request_pause` / `request_budget_change` | Creates a pending approval only — never changes a live ad |

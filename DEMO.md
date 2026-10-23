@@ -13,7 +13,7 @@ uv run uvicorn app.main:app --reload
 ```
 Defaults are safe: `META_DRY_RUN=true` (no Meta calls, simulated metrics) and `META_ALLOW_SPEND=false`.
 Check **Settings**: the checklist shows the database connection, spend switch, caps and what is configured.
-Tests: `uv run pytest` (77 tests, in-memory MongoDB, no LLM, Meta or Tavily calls).
+Tests: `uv run pytest` (85 tests, in-memory MongoDB, no LLM, Meta or Tavily calls).
 
 ## 1. Agent harness — plan a campaign in chat (3 min)
 On the **Dashboard**, type:

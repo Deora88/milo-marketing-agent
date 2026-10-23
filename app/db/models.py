@@ -46,6 +46,9 @@ class Campaign(Doc):
     primary_text: str = ""
     link_url: str = ""
     call_to_action: str = "LEARN_MORE"
+    # Where a click goes: "website" (link_url) or "messenger" (opens a chat with the Page, click-to-Messenger).
+    destination: str = "website"
+    welcome_message: str = ""  # Messenger only: first message people see in the chat (max 300 chars)
     image_path: str = ""  # local file uploaded in the UI; sent to Meta as an ad image on publish
     # draft -> pending_approval -> paused / active ; rejected publish -> draft
     status: str = "draft"
@@ -69,6 +72,7 @@ class Approval(Doc):
     status: str = "pending"  # pending | executing | approved | rejected
     created_at: datetime = Field(default_factory=now)
     decided_at: Optional[datetime] = None
+    executing_since: Optional[datetime] = None  # set while Approve runs; lets a crashed run be recovered
 
 
 class MetricSnapshot(Doc):

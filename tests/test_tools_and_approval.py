@@ -129,3 +129,14 @@ def test_local_targeting_draft_and_summary():
     assert create_campaign_draft(**{**local, "radius_km": 0.2})["status"] == "invalid"
     partial = create_campaign_draft(**{**DRAFT, "latitude": 28.6})
     assert partial["status"] == "invalid" and "together" in partial["errors"][0]
+
+
+def test_messenger_draft_needs_no_link_and_drops_instagram():
+    r = create_campaign_draft(**{**DRAFT, "link_url": "", "platforms": ["facebook", "instagram"],
+                                 "destination": "messenger", "welcome_message": "Hi! How can we help?"})
+    assert r["status"] == "draft_saved" and r["platforms"] == ["facebook"] and "Instagram" in r["message"]
+    c = store.get(Campaign, r["campaign_id"])
+    assert (c.destination, c.objective, c.welcome_message) == ("messenger", "OUTCOME_ENGAGEMENT", "Hi! How can we help?")
+    assert "Messenger chat" in actions.describe("publish_campaign", c, {})
+    assert create_campaign_draft(**{**DRAFT, "destination": "email"})["status"] == "invalid"
+    assert create_campaign_draft(**{**DRAFT, "destination": "messenger", "welcome_message": "x" * 301})["status"] == "invalid"

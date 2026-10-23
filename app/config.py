@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     # Metrics
     metrics_provider: str = "meta"  # meta (real Insights) | simulated (demo data, labelled in the UI)
     metrics_poll_minutes: int = 15
+    approval_timeout_minutes: int = 10  # an approval "executing" longer than this goes back to pending
 
     # Optimizer: after each metrics pull, file recommendations as approvals (never applied automatically)
     optimizer_enabled: bool = True

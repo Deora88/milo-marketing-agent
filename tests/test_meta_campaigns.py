@@ -146,3 +146,30 @@ async def test_missing_id_is_a_clear_error():
 
     with pytest.raises(MetaAPIError, match="did not return an id"):
         await meta.create_on_meta(NoId(), _campaign())
+
+
+async def test_click_to_messenger_ad_opens_a_chat():
+    c = Campaign(name="Home Cleaning", daily_budget=10000, countries=["IN"], platforms=["facebook"],
+                 headline="Expert Home Cleaning", primary_text="Ask us anything", destination="messenger",
+                 objective="OUTCOME_ENGAGEMENT", welcome_message="Hi! Which service do you need?")
+    client = FakeClient()
+    await meta.create_on_meta(client, c)
+    camp = next(d for p, d in client.calls if p.endswith("/campaigns"))
+    adset = next(d for p, d in client.calls if p.endswith("/adsets"))
+    creative = next(d for p, d in client.calls if p.endswith("/adcreatives"))
+    assert camp["objective"] == "OUTCOME_ENGAGEMENT"
+    assert adset["destination_type"] == "MESSENGER" and adset["optimization_goal"] == "CONVERSATIONS"
+    assert adset["promoted_object"] == {"page_id": "999"}
+    assert adset["targeting"]["publisher_platforms"] == ["facebook", "messenger"]
+    link = creative["object_story_spec"]["link_data"]
+    assert link["call_to_action"] == {"type": "MESSAGE_PAGE", "value": {"app_destination": "MESSENGER"}}
+    assert link["page_welcome_message"] == "Hi! Which service do you need?"
+    assert link["link"] == "https://www.facebook.com/999"
+    assert "instagram_user_id" not in creative["object_story_spec"]
+
+
+async def test_website_ad_keeps_link_clicks():
+    c, client = _campaign(), FakeClient()
+    await meta.create_on_meta(client, c)
+    adset = next(d for p, d in client.calls if p.endswith("/adsets"))
+    assert adset["optimization_goal"] == "LINK_CLICKS" and "destination_type" not in adset

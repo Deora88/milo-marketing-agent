@@ -18,7 +18,8 @@ def list_approvals(status: str = "pending"):
 
 def _claim(approval_id: int, new_status: str) -> Approval:
     """Atomically move pending -> new_status. A second click, a retry or a concurrent reject gets 409."""
-    a = store.claim(Approval, approval_id, {"status": "pending"}, {"status": new_status})
+    changes = {"status": new_status, "executing_since": now() if new_status == "executing" else None}
+    a = store.claim(Approval, approval_id, {"status": "pending"}, changes)
     if a is None:
         current = store.get(Approval, approval_id)
         if current is None:
@@ -33,10 +34,13 @@ async def approve(approval_id: int):
     try:
         campaign = await actions.execute(a)
     except Exception as exc:  # noqa: BLE001 - any failure: record it and let the user retry
-        store.claim(Approval, a.id, {"status": "executing"}, {"status": "pending"})
+        store.claim(Approval, a.id, {"status": "executing"}, {"status": "pending", "executing_since": None})
         store.audit("action_failed", approval_id=a.id, error=redact(exc))
         raise HTTPException(502, f"Meta call failed: {redact(exc)}") from exc
-    a = store.claim(Approval, a.id, {"status": "executing"}, {"status": "approved", "decided_at": now()}) or a
+    done = {"status": "approved", "decided_at": now(), "executing_since": None}
+    # If recovery already put a slow run back to pending, the change still happened on Meta: record it as approved.
+    a = (store.claim(Approval, a.id, {"status": "executing"}, done)
+         or store.claim(Approval, a.id, {"status": "pending"}, done) or a)
     return {"approval": a, "campaign": campaign}
 
 

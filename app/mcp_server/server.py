@@ -6,6 +6,8 @@ Used by:          the ADK agent (McpToolset), and any MCP client such as Claude 
 Safety rule: these tools can read, draft and REQUEST changes. None of them can change a live ad.
 request_* tools only create a pending Approval; a human approves it in the Milo dashboard.
 """
+import sys
+
 from mcp.server.fastmcp import FastMCP
 
 from app.approvals import create_approval, to_minor
@@ -14,6 +16,7 @@ from app.db import store
 from app.db.models import Approval, Campaign
 from app.db.store import init_db
 from app.metrics import get_provider
+from app.util.redact import redact
 
 mcp = FastMCP(
     "milo-meta",
@@ -24,6 +27,7 @@ RESTRICTED = {"HOUSING", "EMPLOYMENT", "CREDIT"}
 CATEGORIES = RESTRICTED | {"NONE", "ISSUES_ELECTIONS_POLITICS"}
 CTAS = {"LEARN_MORE", "SHOP_NOW", "SIGN_UP", "CONTACT_US", "DOWNLOAD", "BOOK_TRAVEL"}
 PLATFORMS = {"facebook", "instagram"}
+DESTINATIONS = {"website", "messenger"}
 
 
 @mcp.tool()
@@ -43,6 +47,8 @@ def create_campaign_draft(
     longitude: float | None = None,
     radius_km: float | None = None,
     platforms: list[str] | None = None,
+    destination: str = "website",
+    welcome_message: str = "",
 ) -> dict:
     """Save a Meta campaign draft locally. Nothing is sent to Meta.
 
@@ -63,13 +69,29 @@ def create_campaign_draft(
         radius_km: Optional, reach people within this many km (1-80). Replaces country targeting.
         platforms: Where the ad runs: ["facebook", "instagram"] (default, one ad on both), ["facebook"] or
             ["instagram"]. Instagram needs an ad image, which the user uploads on the campaign page.
+        destination: "website" (default: a click opens link_url) or "messenger" (a click opens a Messenger chat
+            with the Page, where its automated replies answer). Messenger ads run on Facebook and Messenger only,
+            and link_url is optional for them.
+        welcome_message: Messenger only: the first message people see in the chat, max 300 characters.
     """
     errors = []
     if daily_budget_inr < 100:
         errors.append("daily budget must be at least Rs 100")
     if not 18 <= age_min <= age_max <= 65:
         errors.append("ages must satisfy 18 <= age_min <= age_max <= 65")
-    if not link_url.startswith("https://"):
+    destination = (destination or "website").lower()
+    note_dest = ""
+    if destination not in DESTINATIONS:
+        errors.append("destination must be website or messenger")
+    if destination == "messenger":
+        if link_url and not link_url.startswith("https://"):
+            errors.append("link_url must start with https://")
+        if len(welcome_message) > 300:
+            errors.append("welcome_message is longer than 300 characters")
+        if platforms and "instagram" in [p.lower() for p in platforms]:
+            note_dest = " Messenger ads run on Facebook and Messenger, so Instagram was left out."
+        platforms = ["facebook"]
+    elif not link_url.startswith("https://"):
         errors.append("link_url must start with https://")
     if len(headline) > 40:
         errors.append("headline is longer than 40 characters")
@@ -117,12 +139,15 @@ def create_campaign_draft(
         link_url=link_url,
         call_to_action=call_to_action,
         special_ad_category=special_ad_category,
+        destination=destination,
+        welcome_message=welcome_message.strip() if destination == "messenger" else "",
+        objective="OUTCOME_ENGAGEMENT" if destination == "messenger" else "OUTCOME_TRAFFIC",
     ))
     store.audit("draft_created", campaign_id=c.id)
     note = " Upload an ad image on the campaign page before publishing (needed for Instagram)." \
         if "instagram" in c.platforms else ""
     return {"status": "draft_saved", "campaign_id": c.id, "name": c.name, "platforms": c.platforms,
-            "message": f"Draft saved.{note}"}
+            "destination": c.destination, "message": f"Draft saved.{note}{note_dest}"}
 
 
 @mcp.tool()
@@ -292,7 +317,10 @@ TOOL_NAMES = [
 
 
 def main() -> None:
-    init_db()
+    try:
+        init_db()
+    except Exception as exc:  # never die before the stdio handshake: the agent would silently lose every tool
+        print(f"milo-meta: database setup failed, continuing: {redact(exc)}", file=sys.stderr)
     mcp.run()  # stdio
 
 

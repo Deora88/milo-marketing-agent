@@ -5,7 +5,7 @@ One client per process (the web server and the MCP server are separate processes
 from functools import lru_cache
 from typing import Any, TypeVar
 
-from pymongo import ASCENDING, DESCENDING, MongoClient, ReturnDocument
+from pymongo import ASCENDING, MongoClient, ReturnDocument
 from pymongo.database import Database
 
 from app.config import get_settings
@@ -30,7 +30,8 @@ def init_db() -> None:
     d = db()
     d[Approval.collection].create_index([("status", ASCENDING), ("campaign_id", ASCENDING)])
     d[MetricSnapshot.collection].create_index([("campaign_id", ASCENDING), ("date", ASCENDING)])
-    d[AuditLog.collection].create_index([("_id", DESCENDING)])
+    # No index on _id: MongoDB creates it automatically and rejects a custom {_id: -1} index
+    # (mongomock does not). Newest-first sorts on _id use the built-in index.
     d[Campaign.collection].create_index([("status", ASCENDING)])
 
 

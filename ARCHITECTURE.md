@@ -328,7 +328,7 @@ flowchart TD
 | `app/api/` | Routes: chat (SSE), campaigns (+ change requests), approvals, insights (status, summary, audit) |
 | `web/index.html` | The Milo UI: dashboard + chat, campaigns, approvals, analytics, activity, settings (hash routes, calls `/api/*` on the same origin) |
 | `web/milo.css` | Prebuilt Tailwind styles (`web/tailwind.config.js` holds the design tokens) |
-| `tests/` | 77 tests: MCP tools + approvals, image generation (Cloudflare mocked),, MCP over real stdio, HTTP API, chat event streaming, Meta client, optimizer, Tavily research (respx) |
+| `tests/` | 85 tests: MCP tools + approvals, image generation (Cloudflare mocked), database indexes, MCP over real stdio, HTTP API, chat event streaming, Meta client, optimizer, Tavily research (respx) |
 
 ### Process view
 

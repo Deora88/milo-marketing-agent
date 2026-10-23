@@ -6,7 +6,9 @@ clicks Approve in the dashboard (POST /api/approvals/{id}/approve).
 from app.actions import describe, spend_blocked_reason, total_live_budget
 from app.config import get_settings
 from app.db import store
-from app.db.models import Approval, Campaign
+from datetime import timedelta
+
+from app.db.models import Approval, Campaign, now
 
 # action -> campaign statuses it may start from
 ALLOWED_FROM = {
@@ -90,3 +92,24 @@ def create_approval(action: str, campaign_id: int, payload: dict | None = None, 
         "summary": approval.summary,
         "message": "Not executed. The user must click Approve in the Milo dashboard.",
     }
+
+
+def recover_stuck_approvals(older_than_minutes: int | None = None) -> list[int]:
+    """Put approvals left in "executing" back to "pending" so they can be approved again or rejected.
+
+    An approval is "executing" only while Approve runs. If the process dies mid-call it would stay there forever
+    (approve and reject both answer 409). On startup every executing approval is stale (older_than_minutes=0);
+    the scheduler also recovers ones older than APPROVAL_TIMEOUT_MINUTES. A retry is safe: publishing resumes from
+    the Meta ids already saved and finds timed-out creates by their unique name, so nothing is duplicated."""
+    minutes = get_settings().approval_timeout_minutes if older_than_minutes is None else older_than_minutes
+    cutoff = now() - timedelta(minutes=minutes)
+    recovered = []
+    for a in store.find(Approval, {"status": "executing"}):
+        if a.executing_since and a.executing_since > cutoff:
+            continue  # still running
+        expect = {"status": "executing", "executing_since": a.executing_since}
+        if store.claim(Approval, a.id, expect, {"status": "pending", "executing_since": None}):
+            store.audit("approval_recovered", approval_id=a.id, campaign_id=a.campaign_id,
+                        stuck_since=a.executing_since.isoformat() if a.executing_since else None)
+            recovered.append(a.id)
+    return recovered

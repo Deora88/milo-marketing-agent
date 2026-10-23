@@ -22,6 +22,8 @@ def audience_label(c: Campaign) -> str:
 
 
 def platforms_label(c: Campaign) -> str:
+    if c.destination == "messenger":
+        return "Facebook + Messenger"
     return " + ".join(PLATFORM_LABEL.get(p, p) for p in c.platforms)
 
 
@@ -42,7 +44,8 @@ def describe(action: str, c: Campaign, payload: dict) -> str:
     s = get_settings()
     if action == "publish_campaign":
         creative = (f"the existing Page post {s.meta_page_post_id} (its text and image replace Milo's copy)"
-                    if s.meta_page_post_id else f'"{c.headline}" - "{c.primary_text}" -> {c.link_url}')
+                    if s.meta_page_post_id else f'"{c.headline}" - "{c.primary_text}" -> '
+                    + ("opens a Messenger chat with your Page" if c.destination == "messenger" else c.link_url))
         verb = "Resume" if c.status == "paused" else "Publish"
         note = "" if spend_blocked_reason() is None or c.status == "paused" else " Created PAUSED: spending is off."
         return (f"{verb} '{c.name}' on {platforms_label(c)} at Rs {c.daily_budget / 100:,.0f}/day to "

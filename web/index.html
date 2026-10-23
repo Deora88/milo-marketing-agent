@@ -364,10 +364,18 @@
     executing: ["Running…", "bg-accent-soft text-accent"],
   };
   const PLATFORM = { facebook: "Facebook", instagram: "Instagram" };
-  const platforms = (c) => (c.platforms || ["facebook"]).map((p) => PLATFORM[p] || p).join(" + ");
+  const platforms = (c) => c.destination === "messenger" ? "Facebook + Messenger" : (c.platforms || ["facebook"]).map((p) => PLATFORM[p] || p).join(" + ");
   function badge(map, status) {
     const [label, cls] = map[status] || [status, "bg-bg text-muted"];
     return `<span class="whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium ${cls}">${esc(label)}</span>`;
+  }
+  // A dry-run publish never reaches Meta, so never call it "Live".
+  function campaignBadge(c) {
+    if (c.meta_mode === "dry_run" && (c.status === "active" || c.status === "paused")) {
+      const label = c.status === "active" ? "Dry run · not on Meta" : "Paused · dry run";
+      return `<span class="whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium bg-warn/10 text-warn" title="Published in dry-run mode: fake ids, nothing was sent to Meta">${label}</span>`;
+    }
+    return badge(CAMPAIGN_STATUS, c.status);
   }
   const SOURCES = { optimizer: "Optimizer", agent: "Milo", user: "You" };
   // Audience location: a radius around a place (local ads) or the country list.
@@ -584,7 +592,7 @@
 
   function campaignMini(c) {
     return `<a href="#campaign/${c.id}" class="block rounded-xl border border-line p-3 hover:bg-accent-soft">
-      <div class="flex items-center justify-between gap-2"><div class="truncate text-sm font-medium">${esc(c.name)}</div>${badge(CAMPAIGN_STATUS, c.status)}</div>
+      <div class="flex items-center justify-between gap-2"><div class="truncate text-sm font-medium">${esc(c.name)}</div>${campaignBadge(c)}</div>
       <div class="mt-1 flex justify-between text-xs text-muted"><span>${inr(paise(c.daily_budget))}/day</span><span>${esc(where(c))} · ${c.age_min}–${c.age_max}</span></div>
     </a>`;
   }
@@ -645,7 +653,7 @@
 
   function proposalCard(c) {
     return `<div class="mt-2 rounded-lg border border-line bg-surface p-3 text-xs">
-      <div class="flex items-center justify-between gap-2"><span class="font-medium text-muted">Campaign proposal · draft saved</span>${badge(CAMPAIGN_STATUS, c.status)}</div>
+      <div class="flex items-center justify-between gap-2"><span class="font-medium text-muted">Campaign proposal · draft saved</span>${campaignBadge(c)}</div>
       <div class="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
         <span class="text-muted">Name</span><span>${esc(c.name)}</span>
         <span class="text-muted">Audience</span><span>${esc(where(c))} · ages ${c.age_min}–${c.age_max}</span>
@@ -795,7 +803,7 @@
       list.innerHTML = rows.length ? rows.map((c) => `
         <div class="card p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div class="min-w-0">
-            <div class="flex flex-wrap items-center gap-2"><a href="#campaign/${c.id}" class="font-medium hover:text-accent">${esc(c.name)}</a>${badge(CAMPAIGN_STATUS, c.status)}</div>
+            <div class="flex flex-wrap items-center gap-2"><a href="#campaign/${c.id}" class="font-medium hover:text-accent">${esc(c.name)}</a>${campaignBadge(c)}</div>
             <p class="mt-1 truncate text-sm text-muted">${esc(c.headline)}</p>
             <p class="mt-0.5 text-xs text-subtle">${esc(where(c))} · ages ${c.age_min}–${c.age_max} · ${inr(paise(c.daily_budget))} / day · created ${ago(c.created_at)}</p>
           </div>
@@ -814,6 +822,7 @@
   // =====================================================================
   const OBJECTIVES = { OUTCOME_TRAFFIC: "Traffic", OUTCOME_LEADS: "Leads", OUTCOME_SALES: "Sales", OUTCOME_AWARENESS: "Awareness", OUTCOME_ENGAGEMENT: "Engagement" };
   const CTA = { LEARN_MORE: "Learn more", SHOP_NOW: "Shop now", SIGN_UP: "Sign up", CONTACT_US: "Contact us", DOWNLOAD: "Download", BOOK_TRAVEL: "Book now" };
+  const ctaLabel = (c) => c.destination === "messenger" ? "Send message" : (CTA[c.call_to_action] || c.call_to_action);
   const row = (k, v) => `<div class="flex justify-between gap-4 py-1.5"><span class="text-muted">${k}</span><span class="text-right">${v}</span></div>`;
 
   async function renderCampaign(id) {
@@ -837,7 +846,7 @@
         <div class="mb-4 mt-2 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 class="font-display text-2xl tracking-tight">${esc(c.name)}</h1>
-            <div class="mt-1 flex flex-wrap items-center gap-2">${badge(CAMPAIGN_STATUS, c.status)}<span class="text-xs text-muted">${esc(OBJECTIVES[c.objective] || c.objective)} · created ${ago(c.created_at)}</span></div>
+            <div class="mt-1 flex flex-wrap items-center gap-2">${campaignBadge(c)}<span class="text-xs text-muted">${esc(OBJECTIVES[c.objective] || c.objective)} · created ${ago(c.created_at)}</span></div>
           </div>
           <div class="flex flex-wrap gap-2">${actions.join("")}</div>
         </div>
@@ -847,6 +856,8 @@
             <h2 class="font-display text-base font-medium mb-2">Targeting & budget</h2>
             ${row("Objective", esc(OBJECTIVES[c.objective] || c.objective))}
             ${row("Runs on", esc(platforms(c)))}
+            ${row("A click opens", c.destination === "messenger" ? "Messenger chat with your Page" : "Landing page")}
+            ${c.destination === "messenger" && c.welcome_message ? row("Welcome message", esc(c.welcome_message)) : ""}
             ${row(c.radius_km ? "Area" : "Countries", esc(where(c)))}
             ${row("Ages", `${c.age_min}–${c.age_max}`)}
             ${row("Budget / day", inr(paise(c.daily_budget)))}
@@ -854,7 +865,7 @@
           </div>
           <div class="card p-4 text-sm">
             <h2 class="font-display text-base font-medium mb-2">Approval & Meta</h2>
-            ${row("Status", badge(CAMPAIGN_STATUS, c.status))}
+            ${row("Status", campaignBadge(c))}
             ${row("Meta campaign", c.meta_campaign_id ? `<span class="font-mono text-xs">${esc(c.meta_campaign_id)}</span>` : "not created")}
             ${row("Ad set", c.meta_adset_id ? `<span class="font-mono text-xs">${esc(c.meta_adset_id)}</span>` : "—")}
             ${row("Ad", c.meta_ad_id ? `<span class="font-mono text-xs">${esc(c.meta_ad_id)}</span>` : "—")}
@@ -866,7 +877,7 @@
             <div class="text-xs text-subtle">Headline</div><p class="font-medium">${esc(c.headline)}</p>
             <div class="mt-2 text-xs text-subtle">Primary text</div><p>${esc(c.primary_text)}</p>
             <div class="mt-2 flex flex-wrap justify-between gap-2 text-xs text-muted">
-              <span>CTA · ${esc(CTA[c.call_to_action] || c.call_to_action)}</span>
+              <span>CTA · ${esc(ctaLabel(c))}</span>
               <a href="${esc(c.link_url)}" target="_blank" rel="noreferrer" class="max-w-[60%] truncate text-accent hover:underline">${esc((c.link_url || "").replace(/^https?:\/\//, ""))}</a>
             </div>
             <div class="mt-3 border-t border-line pt-3">
@@ -919,7 +930,7 @@
       <p class="whitespace-pre-wrap px-3 pb-2">${esc(c.primary_text)}</p>
       ${c.image_path ? `<img src="/api/campaigns/${c.id}/image" alt="" class="aspect-square w-full object-cover">` : `<div class="grid aspect-[1.91/1] place-items-center bg-gradient-to-br from-[#f3e3c7] to-[#e7eef1] px-6 text-center font-display text-xl text-ink">${esc(c.headline)}</div>`}
       <div class="flex items-center justify-between gap-3 bg-[#f0f2f5] px-3 py-2.5"><div class="min-w-0"><div class="truncate text-[11px] uppercase text-[#65676b]">${esc(host)}</div><div class="truncate font-semibold">${esc(c.headline)}</div></div>
-        <span class="shrink-0 rounded-md bg-[#e4e6eb] px-3 py-1.5 font-semibold">${esc(CTA[c.call_to_action] || c.call_to_action)}</span></div>
+        <span class="shrink-0 rounded-md bg-[#e4e6eb] px-3 py-1.5 font-semibold">${esc(ctaLabel(c))}</span></div>
     </div>
     <p class="mt-2 text-xs text-muted">Milo mock-up from the draft, not rendered by Meta. Use the Meta tabs for Meta's own rendering.</p>`;
   }
@@ -1037,7 +1048,7 @@
         <div class="card mt-4 overflow-x-auto p-0">
           <table class="w-full text-sm">
             <thead><tr class="border-b border-line text-left text-xs uppercase tracking-wide text-subtle"><th class="px-4 py-3 font-medium">Campaign</th><th class="px-3 py-3 text-right font-medium">Spend</th><th class="px-3 py-3 text-right font-medium">Impressions</th><th class="px-3 py-3 text-right font-medium">Clicks</th><th class="px-3 py-3 text-right font-medium">CTR</th><th class="px-4 py-3 text-right font-medium">CPC</th></tr></thead>
-            <tbody>${per.length ? per.map((r) => `<tr class="border-b border-line last:border-0 hover:bg-accent-soft/50"><td class="px-4 py-3"><a class="hover:text-accent" href="#campaign/${r.c.id}">${esc(r.c.name)}</a> ${badge(CAMPAIGN_STATUS, r.c.status)}</td><td class="px-3 py-3 text-right tabular-nums">${inr(r.sp)}</td><td class="px-3 py-3 text-right tabular-nums">${num(r.im)}</td><td class="px-3 py-3 text-right tabular-nums">${num(r.cl)}</td><td class="px-3 py-3 text-right tabular-nums">${pct(r.ctr)}</td><td class="px-4 py-3 text-right tabular-nums">${inr2(r.cpc)}</td></tr>`).join("") : '<tr><td colspan="6" class="px-4 py-8 text-center text-muted">No live campaigns yet.</td></tr>'}</tbody>
+            <tbody>${per.length ? per.map((r) => `<tr class="border-b border-line last:border-0 hover:bg-accent-soft/50"><td class="px-4 py-3"><a class="hover:text-accent" href="#campaign/${r.c.id}">${esc(r.c.name)}</a> ${campaignBadge(r.c)}</td><td class="px-3 py-3 text-right tabular-nums">${inr(r.sp)}</td><td class="px-3 py-3 text-right tabular-nums">${num(r.im)}</td><td class="px-3 py-3 text-right tabular-nums">${num(r.cl)}</td><td class="px-3 py-3 text-right tabular-nums">${pct(r.ctr)}</td><td class="px-4 py-3 text-right tabular-nums">${inr2(r.cpc)}</td></tr>`).join("") : '<tr><td colspan="6" class="px-4 py-8 text-center text-muted">No live campaigns yet.</td></tr>'}</tbody>
           </table>
         </div>`;
     } catch (e) {
@@ -1055,6 +1066,7 @@
     action_executed: ["Change made on Meta", "text-ok"],
     approval_rejected: ["Request rejected", "text-danger"],
     action_failed: ["Meta call failed", "text-danger"],
+    approval_recovered: ["Stuck approval reset to pending (server stopped mid-change)", "text-warn"],
     optimizer_run: ["Optimizer checked campaigns", "text-accent"],
     web_research: ["Milo researched the web", "text-ink"],
     landing_page_read: ["Milo read a landing page", "text-ink"],

@@ -50,7 +50,24 @@ async def pull_metrics() -> int:
     return written
 
 
+def recover_approvals() -> None:
+    from app.approvals import recover_stuck_approvals
+
+    ids = recover_stuck_approvals()
+    if ids:
+        log.warning("recovered stuck approval(s) %s: back to pending", ids)
+
+
 def start() -> None:
+    from app.approvals import recover_stuck_approvals
+
+    try:  # anything still "executing" at startup was cut off when the server stopped
+        ids = recover_stuck_approvals(older_than_minutes=0)
+        if ids:
+            log.warning("startup: recovered approval(s) %s left executing by the last run", ids)
+    except Exception as exc:  # noqa: BLE001 - never block startup (e.g. database down)
+        log.error("startup approval recovery failed: %s", redact(exc))
     scheduler.add_job(pull_metrics, "interval", minutes=get_settings().metrics_poll_minutes, id="pull_metrics",
                       replace_existing=True)
+    scheduler.add_job(recover_approvals, "interval", minutes=5, id="recover_approvals", replace_existing=True)
     scheduler.start()

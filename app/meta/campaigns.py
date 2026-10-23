@@ -85,10 +85,10 @@ async def create_on_meta(client: MetaClient, c: Campaign) -> Campaign:
             campaign_id=c.meta_campaign_id,
             daily_budget=c.daily_budget,
             billing_event="IMPRESSIONS",
-            optimization_goal="LINK_CLICKS",
             bid_strategy="LOWEST_COST_WITHOUT_CAP",
             targeting=build_targeting(c),
             status="PAUSED",
+            **adset_goal(c, client.s.meta_page_id),
         ), "ad set")
 
     story_id = existing_post_id(client.s.meta_page_id, client.s.meta_page_post_id)
@@ -114,6 +114,14 @@ async def create_on_meta(client: MetaClient, c: Campaign) -> Campaign:
     return c
 
 
+def adset_goal(c: Campaign, page_id: str) -> dict:
+    """What the ad set optimises for. Click-to-Messenger: conversations started with the Page."""
+    if c.destination == "messenger":
+        return {"destination_type": "MESSENGER", "optimization_goal": "CONVERSATIONS",
+                "promoted_object": {"page_id": page_id}}
+    return {"optimization_goal": "LINK_CLICKS"}
+
+
 def build_targeting(c: Campaign) -> dict:
     """Ad set targeting. Since Graph API v23 Meta requires an explicit Advantage+ audience choice when a custom age
     range is set (otherwise: error 100 / subcode 1870227). Milo turns it off (0) so the audience is exactly what
@@ -128,7 +136,8 @@ def build_targeting(c: Campaign) -> dict:
         "geo_locations": geo,
         "age_min": c.age_min,
         "age_max": c.age_max,
-        "publisher_platforms": list(c.platforms),
+        # Click-to-Messenger ads run on Facebook and in Messenger itself.
+        "publisher_platforms": ["facebook", "messenger"] if c.destination == "messenger" else list(c.platforms),
         "targeting_automation": {"advantage_audience": 0},
     }
 
@@ -156,12 +165,23 @@ async def update_budget(client: MetaClient, c: Campaign, daily_budget: int) -> N
 
 async def story_spec(client: MetaClient, c: Campaign) -> dict:
     """The ad's look, from Milo's draft: Page (+ Instagram account), text, headline, image, link and button."""
-    link_data = {
-        "link": c.link_url,
-        "message": c.primary_text,
-        "name": c.headline,
-        "call_to_action": {"type": c.call_to_action, "value": {"link": c.link_url}},
-    }
+    if c.destination == "messenger":
+        # Click-to-Messenger: the button opens a chat with the Page, where its automated replies answer.
+        link_data = {
+            "link": c.link_url or f"https://www.facebook.com/{client.s.meta_page_id}",
+            "message": c.primary_text,
+            "name": c.headline,
+            "call_to_action": {"type": "MESSAGE_PAGE", "value": {"app_destination": "MESSENGER"}},
+        }
+        if c.welcome_message:
+            link_data["page_welcome_message"] = c.welcome_message
+    else:
+        link_data = {
+            "link": c.link_url,
+            "message": c.primary_text,
+            "name": c.headline,
+            "call_to_action": {"type": c.call_to_action, "value": {"link": c.link_url}},
+        }
     if c.meta_image_hash:
         link_data["image_hash"] = c.meta_image_hash
     spec = {"page_id": client.s.meta_page_id, "link_data": link_data}
