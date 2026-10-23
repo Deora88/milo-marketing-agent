@@ -8,6 +8,7 @@ os.environ["MONGODB_DB"] = "milo_test"
 os.environ["META_DRY_RUN"] = "true"
 os.environ["META_ALLOW_SPEND"] = "false"
 os.environ["ALLOWED_HOSTS"] = "testserver,localhost,127.0.0.1"
+os.environ["DM_AGENT_ENABLED"] = "false"  # tests call the DM agent directly with a fake model
 os.environ.pop("API_TOKEN", None)
 
 import pytest  # noqa: E402

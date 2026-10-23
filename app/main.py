@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api import approvals, campaigns, chat, insights, webhooks
+from app.api import approvals, campaigns, chat, faq, inbox, insights, webhooks
 from app.config import get_settings
 from app.db.store import init_db
 from app.jobs import scheduler
@@ -36,6 +36,8 @@ app.include_router(campaigns.router)
 app.include_router(approvals.router)
 app.include_router(insights.router)
 app.include_router(webhooks.router)
+app.include_router(inbox.router)
+app.include_router(faq.router)
 
 # The UI in web/ is served from this same origin, so browsers need no CORS.
 # Allowed origins only matter for a separate local dev server (e.g. a frontend on another port).

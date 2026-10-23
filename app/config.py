@@ -31,6 +31,15 @@ class Settings(BaseSettings):
     # the verify token is the value you type in the App Dashboard when subscribing.
     meta_app_secret: str = ""
     meta_webhook_verify_token: str = ""
+    # Replies from the Inbox use a Page access token (pages_messaging). Fetched from the Page with
+    # META_ACCESS_TOKEN when empty. HUMAN_AGENT replies (up to 7 days) need Meta's Human Agent feature approved.
+    meta_page_access_token: str = ""
+    meta_human_agent_enabled: bool = False
+    # DM agent: answers new DMs only from the FAQ, saves leads, hands everything else to a person.
+    # dm_autoreply=false (default): it drafts a reply in the Inbox and a person clicks Send.
+    dm_agent_enabled: bool = True
+    dm_autoreply: bool = False
+    dm_business_name: str = "Milo Demo Home Care"
 
     # Spend safety (live ad account). With allow_spend=false Milo creates and edits campaigns on Meta but keeps
     # every ad PAUSED, so nothing delivers and nothing is charged. Resuming is refused until this is true.

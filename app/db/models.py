@@ -82,14 +82,43 @@ class InboundMessage(Doc):
     page_id: str = ""  # the Page / Instagram account that received it (entry.id)
     sender_id: str = ""  # page-scoped id of the person (PSID / IGSID)
     recipient_id: str = ""
+    customer_id: str = ""  # the person in the conversation (sender of inbound, recipient of outbound)
     mid: str  # Meta's message id: unique, used to drop retries
     kind: str = "message"  # message | postback
     text: str = ""
-    is_echo: bool = False  # a message the Page itself sent
+    is_echo: bool = False  # a message the Page itself sent (outbound)
     referral: dict = Field(default_factory=dict)  # ad referral (ad_id, source) when the chat came from an ad
     sent_at: Optional[datetime] = None  # Meta's timestamp
     received_at: datetime = Field(default_factory=now)
-    status: str = "new"  # new | answered | handed_off | ignored
+    status: str = "new"  # inbound: new | read | answered | handed_off ; outbound: sent | dry_run
+    sent_by: str = ""  # outbound: "human" (Inbox) or "agent" (DM agent)
+    # DM agent result for an inbound message: answer | lead | handoff | skipped, a draft reply and why
+    agent_action: str = ""
+    suggested_reply: str = ""
+    agent_note: str = ""
+    handed_off: bool = False  # the agent passed this conversation to a person
+
+
+class FaqEntry(Doc):
+    """One question and answer the DM agent may use. It answers only from these."""
+    collection: ClassVar[str] = "faq_entries"
+    question: str
+    answer: str
+    enabled: bool = True
+    sample: bool = False  # loaded from Milo's sample FAQ (not the business's own words yet)
+    created_at: datetime = Field(default_factory=now)
+
+
+class Lead(Doc):
+    """Contact details a person shared in a DM, for a callback."""
+    collection: ClassVar[str] = "leads"
+    platform: str
+    page_id: str
+    customer_id: str
+    name: str = ""
+    phone: str = ""
+    note: str = ""  # the message it came from
+    created_at: datetime = Field(default_factory=now)
 
 
 class MetricSnapshot(Doc):

@@ -17,7 +17,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, BackgroundTasks, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pymongo.errors import DuplicateKeyError
 
@@ -70,22 +70,35 @@ def parse_events(body: dict) -> list[InboundMessage]:
                 m = ev["message"] or {}
                 if not m.get("mid"):
                     continue
+                echo = bool(m.get("is_echo"))
                 out.append(InboundMessage(
                     platform=platform, page_id=str(entry.get("id", "")), sender_id=sender, recipient_id=recipient,
-                    mid=m["mid"], text=(m.get("text") or "")[:2000], is_echo=bool(m.get("is_echo")),
+                    customer_id=recipient if echo else sender,
+                    mid=m["mid"], text=(m.get("text") or "")[:2000], is_echo=echo,
                     referral=ev.get("referral") or m.get("referral") or {}, sent_at=_ts(ev.get("timestamp"))))
             elif "postback" in ev:
                 p = ev["postback"] or {}
                 mid = p.get("mid") or f"postback:{sender}:{ev.get('timestamp', '')}"
                 out.append(InboundMessage(
                     platform=platform, page_id=str(entry.get("id", "")), sender_id=sender, recipient_id=recipient,
-                    mid=mid, kind="postback", text=(p.get("title") or p.get("payload") or "")[:2000],
+                    customer_id=sender, mid=mid, kind="postback", text=(p.get("title") or p.get("payload") or "")[:2000],
                     referral=p.get("referral") or {}, sent_at=_ts(ev.get("timestamp"))))
     return out
 
 
+async def _run_agent(ids: list[int]) -> None:
+    """After the 200 is sent: let the DM agent look at each new message (drafts or sends a reply)."""
+    from app.dm import agent
+
+    for mid in ids:
+        try:
+            await agent.handle(mid)
+        except Exception as exc:  # noqa: BLE001 - never let one message break the others
+            log.warning("dm agent failed for message %s: %s", mid, type(exc).__name__)
+
+
 @router.post("/meta")
-async def receive(request: Request):
+async def receive(request: Request, background: BackgroundTasks):
     secret = get_settings().meta_app_secret
     if not secret:
         return JSONResponse({"detail": "Webhook not configured: set META_APP_SECRET."}, status_code=503)
@@ -103,13 +116,18 @@ async def receive(request: Request):
         return JSONResponse({"detail": "Unsupported object."}, status_code=404)
 
     stored = duplicates = 0
+    new_inbound: list[int] = []
     for msg in parse_events(body):
         try:
             store.insert(msg)
             stored += 1
+            if not msg.is_echo:
+                new_inbound.append(msg.id)
         except DuplicateKeyError:
             duplicates += 1  # Meta retried a delivery we already have
     if stored:
         store.audit("dm_received", count=stored, platform=PLATFORM[body["object"]])
     log.info("webhook: %d new event(s), %d duplicate(s)", stored, duplicates)
+    if new_inbound and get_settings().dm_agent_enabled:
+        background.add_task(_run_agent, new_inbound)
     return PlainTextResponse("EVENT_RECEIVED")
