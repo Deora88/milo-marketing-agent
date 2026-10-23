@@ -9,7 +9,7 @@ from pymongo import ASCENDING, MongoClient, ReturnDocument
 from pymongo.database import Database
 
 from app.config import get_settings
-from app.db.models import Approval, AuditLog, Campaign, Doc, MetricSnapshot
+from app.db.models import Approval, AuditLog, Campaign, Doc, InboundMessage, MetricSnapshot
 
 T = TypeVar("T", bound=Doc)
 
@@ -33,6 +33,8 @@ def init_db() -> None:
     # No index on _id: MongoDB creates it automatically and rejects a custom {_id: -1} index
     # (mongomock does not). Newest-first sorts on _id use the built-in index.
     d[Campaign.collection].create_index([("status", ASCENDING)])
+    d[InboundMessage.collection].create_index([("mid", ASCENDING)], unique=True)  # webhook retries
+    d[InboundMessage.collection].create_index([("page_id", ASCENDING), ("sender_id", ASCENDING)])
 
 
 def next_id(collection: str) -> int:

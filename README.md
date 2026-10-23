@@ -24,7 +24,7 @@ cp .env.example .env         # MONGODB_URI + OPENROUTER_API_KEY (+ optional TAVI
                              # while META_DRY_RUN=true
 uv run uvicorn app.main:app --reload
 # open http://localhost:8000
-uv run pytest                # 85 tests, in-memory MongoDB; ignores your .env; never calls the LLM, Meta or Tavily
+uv run pytest                # 92 tests, in-memory MongoDB; ignores your .env; never calls the LLM, Meta or Tavily
 ```
 No `uv`? `pip install uv` first (Windows: `python -m pip install uv`).
 
@@ -68,11 +68,11 @@ app/
   db/                MongoDB: models (Campaign, Approval, MetricSnapshot, AuditLog) + store (ids, atomic claim)
   security.py        Host allow-list, X-Milo-Client header on changes (CSRF), optional API token
   util/redact.py     masks tokens and keys in error text
-  api/               routes: chat (SSE), campaigns (+ change requests), approvals, insights (status, summary, audit)
+  api/               routes: chat (SSE), campaigns (+ change requests), approvals, insights (status, summary, audit), webhooks (Meta DMs)
 web/
   index.html         the Milo UI (single file, served at /)
   milo.css           prebuilt Tailwind styles; tokens in tailwind.config.js
-tests/               85 tests: MCP tools + approval gate (caps, spend switch, CSRF, double approve, failures), MCP over
+tests/               92 tests: MCP tools + approval gate (caps, spend switch, CSRF, double approve, failures), MCP over
                      stdio, HTTP API, chat streaming, Meta client + campaign builder, previews, optimizer, research, image generation
                      (in-memory MongoDB via mongomock, HTTP mocked with respx; a personal .env is ignored)
 ```
@@ -187,6 +187,8 @@ options, each with a "based on" note. The chat shows the sources under the reply
 | POST | `/api/campaigns/{id}/image` · GET same | Upload (JPG/PNG ≤ 8 MB) / view the ad image; sent to Meta on publish |
 | POST | `/api/campaigns/{id}/generate-image` | Generate the ad image with FLUX.1 [schnell] (Cloudflare Workers AI); body `{prompt}` optional; draft only |
 | GET | `/api/campaigns/{id}/preview?format=` | Read-only: Meta's rendering of the ad (Facebook mobile/desktop feed, Instagram feed/story), shown on the campaign page |
+| GET | `/webhooks/meta` | Meta's webhook subscribe check: echoes `hub.challenge` when `hub.verify_token` matches `META_WEBHOOK_VERIFY_TOKEN` |
+| POST | `/webhooks/meta` | Incoming Messenger / Instagram DMs; `X-Hub-Signature-256` checked with `META_APP_SECRET`; stored once per message id |
 | GET | `/api/status` | Model, database check, dry-run, spend switch and caps, Meta, metrics, optimizer, research, image generation (model, used today) — no secrets |
 | GET | `/api/summary` | Dashboard KPIs and daily spend (last 7 days) |
 | GET | `/api/audit` | Activity log |
@@ -219,6 +221,26 @@ Run it on its own: `uv run python -m app.mcp_server.server` (stdio).
 }
 ```
 Approvals requested from Claude Desktop still appear in the Milo dashboard and need your click.
+
+## DM webhook (step 1 of DM handling)
+Meta sends every Messenger and Instagram DM to the Page to `POST /webhooks/meta`. Milo checks the signature,
+stores the message in `inbound_messages` (one row per Meta message id, so retries are dropped) and answers 200
+at once. It does not reply yet: the DM agent (FAQ, lead capture, hand-off to a human) is the next step. Design:
+the "Milo Next Milestone: DMs and Client Accounts" write-up on PR #2.
+
+- **Security:** `/webhooks/` is the only path that skips the Host allow-list, because Meta calls it from the
+  internet. Each event must carry `X-Hub-Signature-256` = HMAC-SHA256 of the raw body with the app secret, checked
+  before parsing (401 otherwise). It has no `/api` prefix and can only store messages; `/api/*` stays localhost-only.
+- **Setup (test with your own account, no App Review needed):**
+  1. `.env`: `META_APP_SECRET` (App Dashboard > App settings > Basic) and `META_WEBHOOK_VERIFY_TOKEN` (any long
+     random string you choose).
+  2. Public HTTPS for local Milo, for example `cloudflared tunnel --url http://localhost:8000` (prints an
+     `https://….trycloudflare.com` address). Self-signed certificates are not accepted by Meta.
+  3. App Dashboard > Messenger (or Webhooks) > Callback URL `https://<tunnel>/webhooks/meta`, Verify token = the
+     same string, then subscribe the Page to `messages` and `messaging_postbacks`.
+  4. Message the Milo Test Page from an account that has a role on the app; the message appears in
+     `inbound_messages` and Activity shows "DM received". Messages from the public need Advanced Access for
+     `pages_messaging` (App Review).
 
 ## Future work
 - **n8n notifications (optional):** call an n8n webhook to send Telegram/email alerts when an approval is waiting

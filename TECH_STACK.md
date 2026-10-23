@@ -25,7 +25,7 @@ and spending on Meta is **off by default** (campaigns are created paused until t
 | Ad research | Tavily Search + Extract API (via httpx) | REST | Recent web context for ad copy (`time_range`, published dates), built for LLM agents; free 1,000 credits/month; optional |
 | Config & secrets | pydantic-settings + `.env` | ≥ 2.4 | Typed settings; secrets never reach the browser |
 | Frontend | Single-file HTML + vanilla JS, Tailwind CSS (prebuilt `web/milo.css`), hand-drawn SVG charts | Tailwind 3 (build only) | Served by FastAPI at `/` — same origin as the API, so no CORS, no hosting, no Node at runtime. Design: warm paper palette, Fraunces + Outfit |
-| Testing | pytest + pytest-asyncio + respx + mongomock | — | 85 tests: MCP tools, approval gate (incl. CSRF, double approve, failures), HTTP API, chat streaming, optimizer, Meta, Tavily and Cloudflare image clients, without calling the LLM, Meta, Tavily, Cloudflare or a real database |
+| Testing | pytest + pytest-asyncio + respx + mongomock | — | 92 tests: MCP tools, approval gate (incl. CSRF, double approve, failures), HTTP API, chat streaming, optimizer, Meta, Tavily and Cloudflare image clients, without calling the LLM, Meta, Tavily, Cloudflare or a real database |
 | Packaging | uv | — | Fast installs and a lockfile (`uv.lock`) for reproducible setup |
 
 ## Key decisions

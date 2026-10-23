@@ -75,6 +75,23 @@ class Approval(Doc):
     executing_since: Optional[datetime] = None  # set while Approve runs; lets a crashed run be recovered
 
 
+class InboundMessage(Doc):
+    """A DM (or postback) delivered by the Meta webhook. Stored first, answered later (DM agent, next step)."""
+    collection: ClassVar[str] = "inbound_messages"
+    platform: str  # "messenger" | "instagram"
+    page_id: str = ""  # the Page / Instagram account that received it (entry.id)
+    sender_id: str = ""  # page-scoped id of the person (PSID / IGSID)
+    recipient_id: str = ""
+    mid: str  # Meta's message id: unique, used to drop retries
+    kind: str = "message"  # message | postback
+    text: str = ""
+    is_echo: bool = False  # a message the Page itself sent
+    referral: dict = Field(default_factory=dict)  # ad referral (ad_id, source) when the chat came from an ad
+    sent_at: Optional[datetime] = None  # Meta's timestamp
+    received_at: datetime = Field(default_factory=now)
+    status: str = "new"  # new | answered | handed_off | ignored
+
+
 class MetricSnapshot(Doc):
     collection: ClassVar[str] = "metric_snapshots"
     campaign_id: int

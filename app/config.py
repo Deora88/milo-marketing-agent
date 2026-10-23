@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     # Optional: build ads from an existing Page post instead of a new one. Post id, "pageid_postid" or post URL.
     meta_page_post_id: str = ""
     meta_dry_run: bool = True  # true = never call Meta (log only)
+    # Webhook for DMs (Messenger / Instagram). The app secret signs every event (X-Hub-Signature-256);
+    # the verify token is the value you type in the App Dashboard when subscribing.
+    meta_app_secret: str = ""
+    meta_webhook_verify_token: str = ""
 
     # Spend safety (live ad account). With allow_spend=false Milo creates and edits campaigns on Meta but keeps
     # every ad PAUSED, so nothing delivers and nothing is charged. Resuming is refused until this is true.
