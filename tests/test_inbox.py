@@ -58,11 +58,11 @@ def test_conversations_are_grouped_with_unread_counts():
     assert inbox.list_conversations()[0]["unread"] == 0
 
 
-def test_reply_in_dry_run_is_stored_and_marks_thread_answered():
+def test_reply_in_dry_run_is_stored_but_thread_stays_unanswered():
     _in("m1")
     sent = asyncio.run(inbox.send_reply("messenger", "999", "psid_1", "We cover all of Delhi NCR."))
     assert sent.is_echo and sent.status == "dry_run" and sent.sent_by == "human"
-    assert store.find(InboundMessage, {"mid": "m1"})[0].status == "answered"
+    assert store.find(InboundMessage, {"mid": "m1"})[0].status == "new"  # nothing reached the person
     assert store.find(AuditLog, {"event": "dm_replied"})
     assert inbox.list_conversations()[0]["last_from"] == "page"
 

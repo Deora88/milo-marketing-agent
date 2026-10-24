@@ -91,12 +91,15 @@ class InboundMessage(Doc):
     sent_at: Optional[datetime] = None  # Meta's timestamp
     received_at: datetime = Field(default_factory=now)
     status: str = "new"  # inbound: new | read | answered | handed_off ; outbound: sent | dry_run
-    sent_by: str = ""  # outbound: "human" (Inbox) or "agent" (DM agent)
-    # DM agent result for an inbound message: answer | lead | handoff | skipped, a draft reply and why
+    sent_by: str = ""  # outbound: "human" (Inbox) or "agent" (DM agent); "" = an echo Milo did not send itself
+    app_id: str = ""  # echoes: the Meta app that sent the message (Milo's own app id, or e.g. Business Suite)
+    # DM agent result for an inbound message: processing | answer | lead | handoff | skipped | failed,
+    # a draft reply and why
     agent_action: str = ""
     suggested_reply: str = ""
     agent_note: str = ""
     handed_off: bool = False  # the agent passed this conversation to a person
+    agent_started_at: Optional[datetime] = None  # when the agent claimed it ("processing")
 
 
 class FaqEntry(Doc):

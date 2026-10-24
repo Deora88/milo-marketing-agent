@@ -10,18 +10,25 @@ Guardrails (from the design write-up on PR #2):
 - DM text is untrusted data, never instructions; the model's output is checked in code (FAQ ids must exist,
   otherwise it becomes a hand-off).
 - DM_AUTOREPLY=false (default): the reply is only drafted for a person to send from the Inbox.
+- DM_AUTOREPLY=true: the bot sends the stored FAQ answers word for word, never the model's own sentence, so a
+  crafted DM can't make the Page promise a price or offer.
+- Each message is claimed atomically before the model call, and one conversation is handled at a time, so two
+  quick messages never get two replies. Ownership is checked again right before sending.
+- Failures are never silent: logged with traceback, audited, and the thread is marked for a person.
 - Replies obey Meta's window (send_reply refuses outside it) and the agent never uses the HUMAN_AGENT tag.
 - The first bot message in a conversation says it is an automated assistant.
 """
+import asyncio
 import json
 import logging
 import os
 import re
+from datetime import timedelta
 from typing import Awaitable, Callable
 
 from app.config import Settings, get_settings
 from app.db import store
-from app.db.models import FaqEntry, InboundMessage, Lead
+from app.db.models import FaqEntry, InboundMessage, Lead, now
 from app.dm import inbox
 from app.util.redact import redact
 
@@ -88,9 +95,24 @@ async def _default_llm(messages: list[dict]) -> str:
     return resp.choices[0].message.content or ""
 
 
-def _human_owns(msgs: list[InboundMessage]) -> bool:
-    """A person has taken this conversation: it was handed off, or a person replied after the last hand-off."""
-    return any(m.handed_off for m in msgs if not m.is_echo) or any(m.is_echo and m.sent_by == "human" for m in msgs)
+def _human_owns(msgs: list[InboundMessage], settings: Settings | None = None) -> bool:
+    return inbox.person_owns(msgs, settings)
+
+
+_locks: dict[tuple, asyncio.Lock] = {}
+
+
+def _thread_lock(msg: InboundMessage) -> asyncio.Lock:
+    """One agent run per conversation at a time (per event loop; the web server runs one)."""
+    key = (id(asyncio.get_running_loop()), msg.platform, msg.page_id, msg.customer_id)
+    return _locks.setdefault(key, asyncio.Lock())
+
+
+def mark_failed(message_id: int, where: str, exc: BaseException) -> None:
+    """Make a failure visible: audit row, and the thread goes to a person instead of looking answered."""
+    note = f"{where}: {type(exc).__name__}: {redact(exc)}"[:300]
+    store.update(InboundMessage, message_id, {"agent_action": "failed", "agent_note": note, "handed_off": True})
+    store.audit("dm_agent_failed", message_id=message_id, where=where, error=note)
 
 
 def _handoff_text(business: str) -> str:
@@ -116,19 +138,26 @@ async def decide(msg: InboundMessage, settings: Settings | None = None, llm: LLM
         ])
         out = _parse(raw)
     except Exception as exc:  # noqa: BLE001 - any model problem is a hand-off, never a guessed answer
-        return {"action": "handoff", "reply": "", "faq_ids": [], "note": f"model unavailable: {redact(exc)[:200]}"}
+        log.warning("dm agent: model failed for message %s: %s", msg.id, redact(exc)[:200])
+        return {"action": "handoff", "reply": "", "faq_ids": [], "model_error": True,
+                "note": f"model unavailable: {redact(exc)[:200]}"}
 
     action = out.get("action")
     known = {f.id for f in faq}
     ids = [i for i in out.get("faq_ids") or [] if isinstance(i, int) and i in known]
     reply = str(out.get("reply") or "").strip()[:MAX_REPLY]
     if action == "answer" and ids and reply:
-        return {"action": "answer", "reply": reply, "faq_ids": ids, "note": f"FAQ {', '.join(map(str, ids))}"}
+        by_id = {f.id: f for f in faq}
+        faq_reply = "\n\n".join(by_id[i].answer for i in dict.fromkeys(ids))[:MAX_REPLY]  # the stored text only
+        return {"action": "answer", "reply": reply, "faq_reply": faq_reply, "faq_ids": ids,
+                "note": f"FAQ {', '.join(map(str, ids))}"}
     if action == "lead":
-        return {"action": "lead", "name": str(out.get("name") or "")[:80], "phone": str(out.get("phone") or "")[:20],
+        given = PHONE.search(str(out.get("phone") or ""))  # model output is untrusted: keep only a real number
+        phone = re.sub(r"[\s-]", "", given.group(0)) if given else ""
+        return {"action": "lead", "name": str(out.get("name") or "")[:80], "phone": phone,
                 "faq_ids": [], "note": "asked for a callback",
                 "reply": f"Thanks! Please share your phone number and a member of the {s.dm_business_name} team "
-                         "will call you back." if not out.get("phone") else
+                         "will call you back." if not phone else
                          f"Thanks! A member of the {s.dm_business_name} team will call you back soon."}
     why = "not covered by the FAQ" if action in ("answer", "handoff") else f"unexpected action {action!r}"
     return {"action": "handoff", "reply": "", "faq_ids": [], "note": why}
@@ -141,36 +170,82 @@ async def handle(message_id: int, settings: Settings | None = None, llm: LLM | N
     msg = store.get(InboundMessage, message_id)
     if not s.dm_agent_enabled or msg is None or msg.is_echo or msg.agent_action:
         return msg
-    thread = inbox.thread_messages(msg.platform, msg.page_id, msg.customer_id)
-    if not force and _human_owns([m for m in thread if m.id != msg.id]):
-        msg.agent_action, msg.agent_note = "skipped", "a person is handling this conversation"
-        store.save(msg)
-        return msg
+    async with _thread_lock(msg):
+        # take the message first: a second task (or a Meta retry) gets None and stops
+        msg = store.claim(InboundMessage, message_id, {"agent_action": ""},
+                          {"agent_action": "processing", "agent_started_at": now()})
+        if msg is None:
+            return store.get(InboundMessage, message_id)
+        try:
+            return await _handle_claimed(msg, s, llm, client, force)
+        except Exception as exc:
+            log.exception("dm agent failed for message %s", message_id)
+            mark_failed(message_id, "agent", exc)
+            return store.get(InboundMessage, message_id)
+
+
+def _others(msg: InboundMessage) -> list[InboundMessage]:
+    return [m for m in inbox.thread_messages(msg.platform, msg.page_id, msg.customer_id) if m.id != msg.id]
+
+
+async def _handle_claimed(msg: InboundMessage, s: Settings, llm: LLM | None, client, force: bool) -> InboundMessage:
+    if not force and _human_owns(_others(msg), s):
+        return store.update(InboundMessage, msg.id, {"agent_action": "skipped",
+                                                     "agent_note": "a person is handling this conversation"})
 
     d = await decide(msg, s, llm)
-    msg.agent_action, msg.agent_note = d["action"], d.get("note", "")
-    msg.suggested_reply = d["reply"] if d["action"] != "handoff" else _handoff_text(s.dm_business_name)
-    msg.handed_off = d["action"] == "handoff"
-    store.save(msg)
+    send_faq_text = s.dm_autoreply and d["action"] == "answer"
+    reply = d.get("faq_reply", d["reply"]) if send_faq_text else d["reply"]
+    # write only the decision fields, never the whole document (open_thread / send_reply may have written meanwhile)
+    msg = store.claim(InboundMessage, msg.id, {"agent_action": "processing"}, {
+        "agent_action": d["action"], "agent_note": d.get("note", ""),
+        "suggested_reply": reply if d["action"] != "handoff" else _handoff_text(s.dm_business_name),
+        "handed_off": d["action"] == "handoff"})
+    if msg is None:  # reset by a person (Suggest) or by recovery while the model ran
+        return None
     already = store.count(Lead, {"customer_id": msg.customer_id, "phone": d.get("phone", "")}) if d.get("phone") else 0
     if d["action"] == "lead" and not already:
         store.insert(Lead(platform=msg.platform, page_id=msg.page_id, customer_id=msg.customer_id,
                           name=d.get("name", ""), phone=d.get("phone", ""), note=(msg.text or "")[:300]))
         store.audit("lead_captured", platform=msg.platform, has_phone=bool(d.get("phone")))
+    if d.get("model_error"):
+        store.audit("dm_model_error", platform=msg.platform, message_id=msg.id, reason=msg.agent_note)
     if d["action"] == "handoff":
         store.audit("dm_handed_off", platform=msg.platform, reason=msg.agent_note)
     else:
         store.audit("dm_agent_suggested", platform=msg.platform, action=d["action"], autoreply=s.dm_autoreply)
 
-    if s.dm_autoreply:
-        text = msg.suggested_reply
-        if not any(m.is_echo and m.sent_by == "agent" for m in thread):  # first bot message: disclose
-            text = f"Hi! I'm the automated assistant for {s.dm_business_name}. {text}"
-        try:
-            await inbox.send_reply(msg.platform, msg.page_id, msg.customer_id, text, sent_by="agent",
-                                   client=client, settings=s)
-        except inbox.ReplyError as exc:
-            msg.agent_note = f"{msg.agent_note}; not sent: {exc}"[:300]
-            store.save(msg)
-            log.warning("dm agent: reply not sent for message %s: %s", msg.id, exc)
-    return store.get(InboundMessage, message_id)
+    if not s.dm_autoreply:
+        return msg
+    others = _others(msg)  # look again right before sending: a person may have replied during the model call
+    if not force and _human_owns(others, s):
+        return store.update(InboundMessage, msg.id, {"agent_note": f"{msg.agent_note}; not sent: a person replied "
+                                                                   "while the bot was thinking"[:300]})
+    text = msg.suggested_reply
+    if not any(m.is_echo and m.sent_by == "agent" for m in others):  # first bot message: disclose
+        text = f"Hi! I'm the automated assistant for {s.dm_business_name}. {text}"
+    try:
+        await inbox.send_reply(msg.platform, msg.page_id, msg.customer_id, text, sent_by="agent",
+                               client=client, settings=s)
+    except inbox.ReplyError as exc:  # refused by Milo's rules (window closed...): expected, not an error
+        log.warning("dm agent: reply not sent for message %s: %s", msg.id, exc)
+        return store.update(InboundMessage, msg.id, {"agent_note": f"{msg.agent_note}; not sent: {exc}"[:300]})
+    except Exception as exc:  # timeout, Mongo, anything else: the person must know it was not sent
+        log.exception("dm agent: sending failed for message %s", msg.id)
+        mark_failed(msg.id, "send", exc)
+    return store.get(InboundMessage, msg.id)
+
+
+def recover_unprocessed(window_hours: int = 24) -> list[int]:
+    """Messages that were stored but never handled (process stopped after the 200, or mid-run).
+
+    Rows left in "processing" are stale on startup (nothing runs before startup) and go back to "", then every
+    recent unhandled customer message is returned so it can be run again. Older ones are past Meta's window."""
+    cutoff = now() - timedelta(hours=window_hours)
+    for m in store.find(InboundMessage, {"is_echo": False, "agent_action": "processing"}):
+        store.claim(InboundMessage, m.id, {"agent_action": "processing"}, {"agent_action": ""})
+    ids = [m.id for m in store.find(InboundMessage, {"is_echo": False, "agent_action": ""}, sort=[("_id", 1)])
+           if (m.sent_at or m.received_at).replace(tzinfo=None) >= cutoff.replace(tzinfo=None)]
+    if ids:
+        store.audit("dm_recovered", count=len(ids))
+    return ids

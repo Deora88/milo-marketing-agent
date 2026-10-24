@@ -1151,7 +1151,7 @@
     if (w.state === "human_agent") return `<span class="rounded-full bg-warn/10 px-2 py-0.5 text-[11px] font-medium text-warn" title="Only a person may reply, with the HUMAN_AGENT tag">24h window closed · human reply only</span>`;
     return `<span class="rounded-full bg-bg px-2 py-0.5 text-[11px] font-medium text-muted">Window closed · wait for a new message</span>`;
   }
-  const AGENT_ACTION = { answer: "answered from FAQ", lead: "lead saved", handoff: "handed to a person", skipped: "stayed out" };
+  const AGENT_ACTION = { answer: "answered from FAQ", lead: "lead saved", handoff: "handed to a person", skipped: "stayed out", processing: "working on it", failed: "failed, needs a person" };
   function draftBox(t, canReply) {
     const lastIn = [...t.messages].reverse().find((m) => !m.is_echo);
     const lastIdx = t.messages.lastIndexOf(lastIn);

@@ -1,7 +1,9 @@
 """App settings, loaded from .env. Secrets never leave the backend."""
+import logging
 import os
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Which env file to read. Tests set MILO_ENV_FILE="" so a developer's personal .env never affects them
@@ -30,6 +32,9 @@ class Settings(BaseSettings):
     # Webhook for DMs (Messenger / Instagram). The app secret signs every event (X-Hub-Signature-256);
     # the verify token is the value you type in the App Dashboard when subscribing.
     meta_app_secret: str = ""
+    # The app's own id (App Dashboard). Echo webhooks carry the id of the app that sent each Page message, so
+    # Milo can tell its own replies from a person answering in Business Suite or the Instagram app.
+    meta_app_id: str = ""
     meta_webhook_verify_token: str = ""
     # Replies from the Inbox use a Page access token (pages_messaging). Fetched from the Page with
     # META_ACCESS_TOKEN when empty. HUMAN_AGENT replies (up to 7 days) need Meta's Human Agent feature approved.
@@ -87,6 +92,21 @@ class Settings(BaseSettings):
     # App
     # Browser origins allowed to call the API besides the app's own origin (local dev servers only).
     cors_origin_regex: str = r"http://(localhost|127\.0\.0\.1)(:\d+)?"
+
+    @model_validator(mode="after")
+    def _warn_unsafe_dm_settings(self):
+        """Log (not refuse) setting combinations that silently don't do what they say."""
+        log = logging.getLogger("milo.config")
+        if self.dm_autoreply and not self.dm_agent_enabled:
+            log.warning("DM_AUTOREPLY=true has no effect while DM_AGENT_ENABLED=false.")
+        if self.dm_autoreply and not self.meta_app_secret:
+            log.warning("DM_AUTOREPLY=true but META_APP_SECRET is empty: the webhook refuses every DM.")
+        if self.dm_autoreply and not self.meta_dry_run and not (self.meta_page_access_token or self.meta_access_token):
+            log.warning("DM_AUTOREPLY=true but there is no Page token (META_PAGE_ACCESS_TOKEN / META_ACCESS_TOKEN).")
+        if self.dm_autoreply and not self.meta_app_id:
+            log.warning("DM_AUTOREPLY=true without META_APP_ID: every echo Milo can't match counts as a person "
+                        "replying, so the bot may step back more often than needed.")
+        return self
 
 
 @lru_cache

@@ -93,3 +93,53 @@ def test_only_the_webhook_skips_the_host_allow_list():
     outside = TestClient(app, base_url="https://milo-tunnel.example.com")
     assert _post(outside, _body(mid="m_out")).status_code == 200
     assert outside.get("/api/status").status_code == 400  # everything else stays localhost-only
+
+
+def test_malformed_signatures_are_rejected():
+    c = TestClient(app)
+    for sig in ("sha256=", "sha256=zz", "sha256=" + "0" * 64, "SHA256=abc", "sha256 =abc"):
+        assert _post(c, _body(), sig=sig).status_code == 401
+    assert store.count(InboundMessage) == 0
+
+
+def test_oversized_body_is_refused_before_reading():
+    c = TestClient(app)
+    r = c.post("/webhooks/meta", content=b"x" * 10, headers={"Content-Length": str(2_000_000)})
+    assert r.status_code == 413
+    big = c.post("/webhooks/meta", content=b"x" * 1_000_001)
+    assert big.status_code == 413
+
+
+def test_retry_of_a_never_handled_message_is_requeued(monkeypatch):
+    from app.api import webhooks
+    monkeypatch.setenv("DM_AGENT_ENABLED", "true")
+    get_settings.cache_clear()
+    queued = []
+
+    async def fake_run(ids):
+        queued.append(list(ids))
+    monkeypatch.setattr(webhooks, "_run_agent", fake_run)
+    c = TestClient(app)
+    _post(c, _body())  # stored; pretend the process died before the agent ran
+    _post(c, _body())  # Meta retries
+    [m] = store.find(InboundMessage)
+    assert queued == [[m.id], [m.id]]
+    store.update(InboundMessage, m.id, {"agent_action": "answer"})
+    _post(c, _body())  # already handled: not requeued
+    assert len(queued) == 2
+
+
+def test_background_failure_is_recorded(monkeypatch):
+    import asyncio
+
+    from app.api import webhooks
+    from app.dm import agent
+
+    async def boom(mid, **kw):
+        raise RuntimeError("mongo down")
+    monkeypatch.setattr(agent, "handle", boom)
+    m = store.insert(InboundMessage(platform="messenger", page_id="999", sender_id="p", customer_id="p", mid="x"))
+    asyncio.run(webhooks._run_agent([m.id]))
+    row = store.get(InboundMessage, m.id)
+    assert row.agent_action == "failed" and row.handed_off
+    assert store.find(AuditLog, {"event": "dm_agent_failed"})

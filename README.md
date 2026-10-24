@@ -240,12 +240,14 @@ the "Milo Next Milestone: DMs and Client Accounts" write-up on PR #2.
   internet. Each event must carry `X-Hub-Signature-256` = HMAC-SHA256 of the raw body with the app secret, checked
   before parsing (401 otherwise). It has no `/api` prefix and can only store messages; `/api/*` stays localhost-only.
 - **Setup (test with your own account, no App Review needed):**
-  1. `.env`: `META_APP_SECRET` (App Dashboard > App settings > Basic) and `META_WEBHOOK_VERIFY_TOKEN` (any long
-     random string you choose).
+  1. `.env`: `META_APP_SECRET` and `META_APP_ID` (App Dashboard > App settings > Basic) and
+     `META_WEBHOOK_VERIFY_TOKEN` (any long random string you choose).
   2. Public HTTPS for local Milo, for example `cloudflared tunnel --url http://localhost:8000` (prints an
      `https://….trycloudflare.com` address). Self-signed certificates are not accepted by Meta.
   3. App Dashboard > Messenger (or Webhooks) > Callback URL `https://<tunnel>/webhooks/meta`, Verify token = the
-     same string, then subscribe the Page to `messages` and `messaging_postbacks`.
+     same string, then subscribe the Page to `messages`, `messaging_postbacks` and `message_echoes`. Without
+     `message_echoes`, replies a person types in Business Suite or the Instagram app never reach Milo, and the bot
+     can't tell that a person has taken the conversation. For Instagram DMs, also subscribe the `instagram` object.
   4. Message the Milo Test Page from an account that has a role on the app; the message appears in
      `inbound_messages` and Activity shows "DM received". Messages from the public need Advanced Access for
      `pages_messaging` (App Review).

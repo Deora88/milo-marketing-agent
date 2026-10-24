@@ -1,4 +1,5 @@
 """Milo backend: FastAPI serves the API and the dashboard (web/)."""
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -25,6 +26,16 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # noqa: BLE001 - start anyway; Settings shows the database error
         logging.getLogger("milo").error("MongoDB not reachable (%s). Check MONGODB_URI and Atlas Network Access.",
                                         redact(exc))
+    if get_settings().dm_agent_enabled:
+        try:  # DMs stored before a restart but never handled by the agent
+            from app.api.webhooks import _run_agent
+            from app.dm.agent import recover_unprocessed
+
+            ids = recover_unprocessed()
+            if ids:
+                asyncio.get_running_loop().create_task(_run_agent(ids))
+        except Exception:  # noqa: BLE001 - start anyway
+            logging.getLogger("milo").exception("could not recover unhandled DMs")
     scheduler.start()
     yield
     scheduler.scheduler.shutdown(wait=False)

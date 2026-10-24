@@ -12,6 +12,8 @@ Meta's messaging rules (developers.facebook.com, Messenger Platform policy):
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from pymongo.errors import DuplicateKeyError
+
 from app.config import Settings, get_settings
 from app.db import store
 from app.db.models import InboundMessage, now
@@ -65,6 +67,29 @@ def reply_window(messages: list[InboundMessage], at: datetime | None = None) -> 
     return Window(state, closes, human_until, bool(ad_msgs))
 
 
+def by_person(m: InboundMessage, settings: Settings | None = None) -> bool:
+    """Was this Page message written by a person (not the DM agent)?
+
+    - sent_by "human" / "agent": Milo sent it (Inbox / DM agent).
+    - sent_by "": an echo webhook Milo can't match to its own send yet. If its app_id is Milo's app, it is Milo's
+      own message whose echo arrived before send_reply stored it (send_reply fills sent_by in a moment).
+      Anything else (Business Suite, Instagram app, another tool) counts as a person, which is the safe side:
+      the bot steps back. Without META_APP_ID every unmatched echo counts as a person.
+    """
+    if not m.is_echo or m.sent_by == "agent":
+        return False
+    if m.sent_by == "human":
+        return True
+    own_app = (settings or get_settings()).meta_app_id
+    return not (own_app and m.app_id == own_app)
+
+
+def person_owns(msgs: list[InboundMessage], settings: Settings | None = None) -> bool:
+    """A person has this conversation: the agent handed it off, or a person replied as the Page.
+    Either one is permanent for the thread: once handed off, the bot stays out until a person clears it."""
+    return any(m.handed_off for m in msgs if not m.is_echo) or any(by_person(m, settings) for m in msgs)
+
+
 def _key(m: InboundMessage) -> tuple[str, str, str]:
     customer = m.customer_id or (m.recipient_id if m.is_echo else m.sender_id)
     return (m.platform, m.page_id, customer)
@@ -89,7 +114,7 @@ def list_conversations() -> list[dict]:
             "last_text": last.text, "last_at": _when(last), "last_from": "page" if last.is_echo else "customer",
             "unread": sum(1 for m in msgs if not m.is_echo and m.status == "new"),
             "needs_person": any(m.handed_off for m in msgs if not m.is_echo)
-            and not any(m.is_echo and m.sent_by == "human" for m in msgs),
+            and not any(by_person(m) for m in msgs),
             "messages": len(msgs), "window": reply_window(msgs).as_dict(),
         })
     return sorted(out, key=lambda r: r["last_at"], reverse=True)
@@ -97,10 +122,10 @@ def list_conversations() -> list[dict]:
 
 def open_thread(platform: str, page_id: str, customer_id: str) -> dict:
     msgs = thread_messages(platform, page_id, customer_id)
-    for m in msgs:
-        if not m.is_echo and m.status == "new":
+    for m in msgs:  # one field only: never overwrite what the agent wrote meanwhile
+        if not m.is_echo and m.status == "new" and store.claim(InboundMessage, m.id, {"status": "new"},
+                                                                {"status": "read"}):
             m.status = "read"
-            store.save(m)
     return {"platform": platform, "page_id": page_id, "customer_id": customer_id,
             "window": reply_window(msgs).as_dict(), "messages": [m.model_dump() for m in msgs]}
 
@@ -155,13 +180,21 @@ async def send_reply(platform: str, page_id: str, customer_id: str, text: str, s
         if own:
             await client.aclose()
 
-    sent = store.insert(InboundMessage(
-        platform=platform, page_id=page_id, sender_id=page_id, recipient_id=customer_id, customer_id=customer_id,
-        mid=str(resp.get("message_id") or resp.get("id")), text=text, is_echo=True, sent_at=now(),
-        status="dry_run" if s.meta_dry_run else "sent", sent_by=sent_by))
-    for m in msgs:
-        if not m.is_echo and m.status in ("new", "read"):
-            m.status = "answered"
-            store.save(m)
+    mid = resp.get("message_id") or resp.get("id")
+    if not mid:  # without an id the reply can't be matched to its echo, and two such replies would collide
+        raise ReplyError("Meta accepted the reply but returned no message id. Check the conversation in Meta "
+                         "Business Suite before sending again.")
+    status = "dry_run" if s.meta_dry_run else "sent"
+    try:
+        sent = store.insert(InboundMessage(
+            platform=platform, page_id=page_id, sender_id=page_id, recipient_id=customer_id, customer_id=customer_id,
+            mid=str(mid), text=text, is_echo=True, sent_at=now(), status=status, sent_by=sent_by))
+    except DuplicateKeyError:  # Meta's echo webhook got there first: keep its row, record who sent it
+        [echo] = store.find(InboundMessage, {"mid": str(mid)})
+        sent = store.update(InboundMessage, echo.id, {"sent_by": sent_by, "status": status})
+    if not s.meta_dry_run:  # in dry-run nothing reached the person, so their messages stay unanswered
+        for m in msgs:
+            if not m.is_echo and m.status in ("new", "read"):
+                store.claim(InboundMessage, m.id, {"status": {"$in": ["new", "read"]}}, {"status": "answered"})
     store.audit("dm_replied", platform=platform, by=sent_by, tag=body.get("tag", ""), dry_run=s.meta_dry_run)
     return sent

@@ -75,6 +75,7 @@ def parse_events(body: dict) -> list[InboundMessage]:
                     platform=platform, page_id=str(entry.get("id", "")), sender_id=sender, recipient_id=recipient,
                     customer_id=recipient if echo else sender,
                     mid=m["mid"], text=(m.get("text") or "")[:2000], is_echo=echo,
+                    app_id=str(m.get("app_id") or "") if echo else "",
                     referral=ev.get("referral") or m.get("referral") or {}, sent_at=_ts(ev.get("timestamp"))))
             elif "postback" in ev:
                 p = ev["postback"] or {}
@@ -94,16 +95,35 @@ async def _run_agent(ids: list[int]) -> None:
         try:
             await agent.handle(mid)
         except Exception as exc:  # noqa: BLE001 - never let one message break the others
-            log.warning("dm agent failed for message %s: %s", mid, type(exc).__name__)
+            log.exception("dm agent failed for message %s", mid)
+            try:
+                agent.mark_failed(mid, "background", exc)
+            except Exception:  # noqa: BLE001 - e.g. the database itself is down; the traceback above stays
+                log.exception("could not record the failure for message %s", mid)
+
+
+async def _read_capped(request: Request) -> bytes | None:
+    """The raw body, or None if it is bigger than MAX_BODY (checked before and while reading, never after)."""
+    length = request.headers.get("content-length", "")
+    if length.isdigit() and int(length) > MAX_BODY:
+        return None
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw += chunk
+        if len(raw) > MAX_BODY:
+            return None
+    return bytes(raw)
 
 
 @router.post("/meta")
 async def receive(request: Request, background: BackgroundTasks):
     secret = get_settings().meta_app_secret
     if not secret:
+        log.error("webhook: META_APP_SECRET is not set, refusing a Meta delivery (Meta will retry, then may disable "
+                  "the webhook)")
         return JSONResponse({"detail": "Webhook not configured: set META_APP_SECRET."}, status_code=503)
-    raw = await request.body()
-    if len(raw) > MAX_BODY:
+    raw = await _read_capped(request)
+    if raw is None:
         return JSONResponse({"detail": "Payload too large."}, status_code=413)
     if not signature_ok(raw, request.headers.get("x-hub-signature-256", ""), secret):
         log.warning("webhook: rejected a request with a missing or wrong signature")
@@ -125,6 +145,9 @@ async def receive(request: Request, background: BackgroundTasks):
                 new_inbound.append(msg.id)
         except DuplicateKeyError:
             duplicates += 1  # Meta retried a delivery we already have
+            old = (store.find(InboundMessage, {"mid": msg.mid}) or [None])[0]
+            if old and not old.is_echo and not old.agent_action:
+                new_inbound.append(old.id)  # stored earlier but never handled (e.g. restart after the 200)
     if stored:
         store.audit("dm_received", count=stored, platform=PLATFORM[body["object"]])
     log.info("webhook: %d new event(s), %d duplicate(s)", stored, duplicates)

@@ -32,15 +32,17 @@ async def suggest(platform: str, page_id: str, customer_id: str):
     """Ask the DM agent for a draft reply to the person's latest message (never sends)."""
     from app.config import get_settings
     from app.db import store
+    from app.db.models import InboundMessage
     from app.dm import agent
 
     latest = [m for m in inbox.thread_messages(platform, page_id, customer_id) if not m.is_echo]
     if not latest:
         raise HTTPException(404, "no customer message to answer")
     msg = latest[-1]
-    msg.agent_action = msg.suggested_reply = msg.agent_note = ""
-    msg.handed_off = False
-    store.save(msg)
+    reset = store.claim(InboundMessage, msg.id, {"agent_action": {"$ne": "processing"}},
+                        {"agent_action": "", "suggested_reply": "", "agent_note": "", "handed_off": False})
+    if reset is None:
+        raise HTTPException(409, "The bot is still working on this message. Try again in a few seconds.")
     s = get_settings().model_copy(update={"dm_autoreply": False, "dm_agent_enabled": True})
     done = await agent.handle(msg.id, settings=s, force=True)  # a person asked: draft even if they own it
     return {"message": done.model_dump() if done else None}

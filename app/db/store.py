@@ -94,5 +94,10 @@ def claim(cls: type[T], id_: int, expect: dict, changes: dict) -> T | None:
     return _from_doc(cls, doc)
 
 
+def update(cls: type[T], id_: int, changes: dict) -> T | None:
+    """Set only these fields (no whole-document replace, so concurrent writers don't wipe each other)."""
+    return claim(cls, id_, {}, changes)
+
+
 def audit(event: str, **detail) -> None:
     insert(AuditLog(event=event, detail=detail))
