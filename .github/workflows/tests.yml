@@ -1,0 +1,12 @@
+name: tests
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+      - run: uvx ruff check app tests --select F,E9,B --ignore B008
+      - run: uv run pytest -q  
