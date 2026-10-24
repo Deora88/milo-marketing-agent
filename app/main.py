@@ -1,4 +1,5 @@
 """Milo backend: FastAPI serves the API and the dashboard (web/)."""
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -7,7 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api import approvals, campaigns, chat, insights
+from app.api import approvals, campaigns, chat, faq, inbox, insights, webhooks
 from app.config import get_settings
 from app.db.store import init_db
 from app.jobs import scheduler
@@ -25,6 +26,16 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # noqa: BLE001 - start anyway; Settings shows the database error
         logging.getLogger("milo").error("MongoDB not reachable (%s). Check MONGODB_URI and Atlas Network Access.",
                                         redact(exc))
+    if get_settings().dm_agent_enabled:
+        try:  # DMs stored before a restart but never handled by the agent
+            from app.api.webhooks import _run_agent
+            from app.dm.agent import recover_unprocessed
+
+            ids = recover_unprocessed()
+            if ids:
+                asyncio.get_running_loop().create_task(_run_agent(ids))
+        except Exception:  # noqa: BLE001 - start anyway
+            logging.getLogger("milo").exception("could not recover unhandled DMs")
     scheduler.start()
     yield
     scheduler.scheduler.shutdown(wait=False)
@@ -35,6 +46,9 @@ app.include_router(chat.router)
 app.include_router(campaigns.router)
 app.include_router(approvals.router)
 app.include_router(insights.router)
+app.include_router(webhooks.router)
+app.include_router(inbox.router)
+app.include_router(faq.router)
 
 # The UI in web/ is served from this same origin, so browsers need no CORS.
 # Allowed origins only matter for a separate local dev server (e.g. a frontend on another port).

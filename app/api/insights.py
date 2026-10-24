@@ -29,6 +29,17 @@ def _image_status(s, db_ok: bool) -> dict:
             "daily_limit": s.image_daily_limit, "used_today": used_today() if db_ok else 0}
 
 
+def _dm_status(s, db_ok: bool) -> dict:
+    from app.db import store
+    from app.db.models import FaqEntry, InboundMessage
+
+    return {"webhook_configured": bool(s.meta_app_secret and s.meta_webhook_verify_token),
+            "agent_enabled": s.dm_agent_enabled, "autoreply": s.dm_autoreply, "business_name": s.dm_business_name,
+            "faq_count": store.count(FaqEntry, {"enabled": True}) if db_ok else 0,
+            "page_token_set": bool(s.meta_page_access_token), "human_agent_enabled": s.meta_human_agent_enabled,
+            "unread": store.count(InboundMessage, {"is_echo": False, "status": "new"}) if db_ok else 0}
+
+
 @router.get("/status")
 def status():
     s = get_settings()
@@ -53,6 +64,7 @@ def status():
         },
         "api_token_required": bool(s.api_token),
         "image_generation": _image_status(s, db_state["ok"]),
+        "dm": _dm_status(s, db_state["ok"]),
         "metrics_provider": effective_provider(),
         "metrics_poll_minutes": s.metrics_poll_minutes,
         "research": {

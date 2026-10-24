@@ -7,6 +7,10 @@
    so a hidden form or fetch on another site can no longer press Approve (CSRF).
 3. Optional API token (API_TOKEN in .env) for running Milo beyond localhost: every /api request must then send
    "Authorization: Bearer <token>".
+
+The one exception is /webhooks/: Meta calls it from the internet (through a tunnel or a public host), so it skips
+the Host allow-list. It is protected instead by the X-Hub-Signature-256 check in app/api/webhooks.py, has no /api
+prefix (so no token or CSRF header applies), and can only store incoming messages.
 """
 import hmac
 
@@ -19,8 +23,13 @@ CLIENT_HEADER = "x-milo-client"
 UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
 
 
+WEBHOOK_PREFIX = "/webhooks/"
+
+
 async def guard_requests(request: Request, call_next):
     s = get_settings()
+    if request.url.path.startswith(WEBHOOK_PREFIX):
+        return await call_next(request)  # signature-checked in the route itself
     host = (request.headers.get("host") or "").rsplit(":", 1)[0].strip("[]").lower()
     allowed = {h.strip().lower() for h in s.allowed_hosts.split(",") if h.strip()}
     if host not in allowed:

@@ -28,6 +28,15 @@
     @keyframes shimmer { to { background-position: -200% 0; } }
     #toast { position: fixed; right: 1rem; bottom: 1rem; z-index: 60; transform: translateY(120%); opacity: 0; transition: transform .25s cubic-bezier(.22,1,.36,1), opacity .2s; }
     #toast.show { transform: translateY(0); opacity: 1; }
+    .inbox-grid { display: grid; gap: 1rem; }
+    @media (min-width: 1024px) { .inbox-grid { grid-template-columns: 320px minmax(0, 1fr); } }
+    .inbox-list { max-height: 70vh; overflow-y: auto; }
+    .inbox-thread { display: flex; flex-direction: column; gap: .5rem; max-height: 52vh; min-height: 220px; overflow-y: auto; padding: .25rem; }
+    .bubble { max-width: 78%; padding: .5rem .75rem; border-radius: 16px; font-size: .875rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .bubble-in { align-self: flex-start; background: #efeae0; border-bottom-left-radius: 4px; }
+    .bubble-out { align-self: flex-end; background: #35586a; color: #fff; border-bottom-right-radius: 4px; }
+    .bubble-meta { font-size: 11px; color: #8f8a81; }
+    .bubble-meta.out { align-self: flex-end; } .bubble-meta.in { align-self: flex-start; }
     @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
   </style>
 </head>
@@ -219,6 +228,18 @@
     </section>
 
     <!-- ============ ACTIVITY ============ -->
+    <section id="view-inbox" class="view hidden">
+      <div class="mb-4">
+        <h1 class="font-display text-2xl tracking-tight">Inbox</h1>
+        <p class="text-sm text-muted">Messenger and Instagram DMs to your Page. The bot drafts answers from your FAQ; you send them inside Meta's reply window.</p>
+      </div>
+      <div class="inbox-grid">
+        <div id="inboxList" class="card inbox-list p-2"></div>
+        <div id="inboxThread" class="card p-4"></div>
+      </div>
+      <div id="faqRoot" class="card mt-4 p-4"></div>
+    </section>
+
     <section id="view-activity" class="view hidden">
       <div class="mb-4">
         <h1 class="font-display text-2xl tracking-tight">Activity</h1>
@@ -263,6 +284,7 @@
     { id: "dashboard", label: "Dashboard" },
     { id: "campaigns", label: "Campaigns" },
     { id: "approvals", label: "Approvals" },
+    { id: "inbox", label: "Inbox" },
     { id: "analytics", label: "Analytics" },
     { id: "activity", label: "Activity" },
     { id: "settings", label: "Settings" },
@@ -271,6 +293,7 @@
   const state = {
     status: null,
     pendingCount: 0,
+    unreadDms: 0,
     sessionId: newId(),
     messages: [],
     streaming: false,
@@ -516,6 +539,7 @@
     try {
       const s = await api("/api/summary");
       state.pendingCount = s.pending_approvals;
+      try { state.unreadDms = (await api("/api/inbox")).reduce((n, c) => n + c.unread, 0); } catch { /* inbox optional */ }
       renderNav();
     } catch { /* offline */ }
   }
@@ -524,7 +548,8 @@
     const current = (location.hash.slice(1) || "dashboard").split("/")[0];
     const active = current === "campaign" ? "campaigns" : current;
     const item = (n, cls) => {
-      const count = n.id === "approvals" && state.pendingCount ? `<span class="ml-1.5 rounded-full bg-warn/15 px-1.5 text-[11px] font-semibold text-warn">${state.pendingCount}</span>` : "";
+      const n2 = n.id === "approvals" ? state.pendingCount : n.id === "inbox" ? state.unreadDms : 0;
+      const count = n2 ? `<span class="ml-1.5 rounded-full bg-warn/15 px-1.5 text-[11px] font-semibold text-warn">${n2}</span>` : "";
       return `<a href="#${n.id}" class="${cls} ${active === n.id ? "bg-accent-soft text-accent" : "text-muted hover:text-ink"}" ${active === n.id ? 'aria-current="page"' : ""}>${n.label}${count}</a>`;
     };
     $("desktopNav").innerHTML = NAV.map((n) => item(n, "inline-flex items-center rounded-full px-3 py-1.5 text-sm")).join("");
@@ -1067,6 +1092,12 @@
     approval_rejected: ["Request rejected", "text-danger"],
     action_failed: ["Meta call failed", "text-danger"],
     approval_recovered: ["Stuck approval reset to pending (server stopped mid-change)", "text-warn"],
+    dm_received: ["DM received (Messenger / Instagram)", "text-ink"],
+    dm_replied: ["DM reply sent", "text-ink"],
+    dm_agent_suggested: ["DM bot drafted / sent an answer", "text-ink"],
+    dm_handed_off: ["DM handed to a person (not in the FAQ)", "text-warn"],
+    lead_captured: ["Lead captured from a DM", "text-ok"],
+    faq_changed: ["Bot FAQ changed", "text-ink"],
     optimizer_run: ["Optimizer checked campaigns", "text-accent"],
     web_research: ["Milo researched the web", "text-ink"],
     landing_page_read: ["Milo read a landing page", "text-ink"],
@@ -1104,6 +1135,156 @@
     }
   }
 
+
+  // =====================================================================
+  // INBOX (DMs)
+  // =====================================================================
+  const PLATFORM_DM = { messenger: "Messenger", instagram: "Instagram" };
+  const threadKey = (c) => [c.platform, c.page_id, c.customer_id].map(encodeURIComponent).join("~");
+  const who = (id) => `Customer …${esc(String(id).slice(-4))}`;
+  function windowBadge(w) {
+    if (!w) return "";
+    if (w.state === "open") {
+      const hrs = Math.max(0, Math.round((new Date(w.closes_at) - Date.now()) / 36e5));
+      return `<span class="rounded-full bg-ok/10 px-2 py-0.5 text-[11px] font-medium text-ok" title="Meta reply window">Reply window open · ${hrs >= 48 ? Math.round(hrs / 24) + " days" : hrs + "h"} left${w.from_ad ? " (from ad)" : ""}</span>`;
+    }
+    if (w.state === "human_agent") return `<span class="rounded-full bg-warn/10 px-2 py-0.5 text-[11px] font-medium text-warn" title="Only a person may reply, with the HUMAN_AGENT tag">24h window closed · human reply only</span>`;
+    return `<span class="rounded-full bg-bg px-2 py-0.5 text-[11px] font-medium text-muted">Window closed · wait for a new message</span>`;
+  }
+  const AGENT_ACTION = { answer: "answered from FAQ", lead: "lead saved", handoff: "handed to a person", skipped: "stayed out", processing: "working on it", failed: "failed, needs a person" };
+  function draftBox(t, canReply) {
+    const lastIn = [...t.messages].reverse().find((m) => !m.is_echo);
+    const lastIdx = t.messages.lastIndexOf(lastIn);
+    const answeredAfter = t.messages.slice(lastIdx + 1).some((m) => m.is_echo);
+    if (!lastIn || answeredAfter) return "";
+    const ask = `<button type="button" data-suggest="${esc(threadKey(t))}" class="rounded-lg border border-line px-3 py-1.5 text-xs hover:bg-accent-soft">${lastIn.suggested_reply ? "New draft" : "Ask the bot for a draft"}</button>`;
+    if (!lastIn.suggested_reply) return `<div class="mt-3 flex items-center justify-between gap-2 rounded-lg bg-bg px-3 py-2 text-xs text-muted"><span>No bot draft yet for the latest message.</span>${ask}</div>`;
+    return `<div class="mt-3 rounded-lg bg-bg px-3 py-2">
+      <div class="flex items-center justify-between gap-2 text-xs text-muted"><span>Bot draft · ${esc(AGENT_ACTION[lastIn.agent_action] || lastIn.agent_action)}${lastIn.agent_note ? " · " + esc(lastIn.agent_note) : ""}</span>
+        <span class="flex gap-2">${canReply ? `<button type="button" data-use-draft class="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-accent-fg">Use draft</button>` : ""}${ask}</span></div>
+      <p id="draftText" class="mt-1 text-sm whitespace-pre-wrap">${esc(lastIn.suggested_reply)}</p></div>`;
+  }
+  async function renderFaq() {
+    const root = $("faqRoot");
+    if (!root) return;
+    try {
+      const [rows, s] = [await api("/api/faq"), state.status || await api("/api/status")];
+      const dm = s.dm || {};
+      root.innerHTML = `
+        <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div><h2 class="font-display text-base font-medium">Bot FAQ</h2>
+          <p class="text-xs text-muted">The DM bot answers only from these entries; anything else goes to a person. ${!dm.agent_enabled ? "Bot is off (DM_AGENT_ENABLED=false)." : dm.autoreply ? "Auto-send is ON: the bot replies by itself inside Meta's window." : "Auto-send is off (DM_AUTOREPLY=false): the bot only drafts, you click Send."}</p></div>
+          <button type="button" data-faq-sample class="rounded-lg border border-line px-3 py-1.5 text-xs hover:bg-accent-soft">Load sample FAQ</button>
+        </div>
+        <div class="divide-y divide-line">${rows.length ? rows.map((f) => `
+          <div class="flex items-start justify-between gap-3 py-2">
+            <div class="min-w-0"><div class="text-sm font-medium">${esc(f.question)}${f.sample ? ' <span class="rounded-full bg-warn/10 px-1.5 text-[11px] text-warn">sample</span>' : ""}</div>
+            <div class="text-sm text-muted">${esc(f.answer)}</div></div>
+            <button type="button" data-faq-del="${f.id}" class="shrink-0 rounded-lg border border-line px-2 py-1 text-xs hover:bg-accent-soft" aria-label="Delete FAQ entry">Delete</button>
+          </div>`).join("") : '<p class="py-3 text-sm text-muted">No entries yet. Load the sample FAQ or add your own below. With no FAQ, the bot hands every message to a person.</p>'}</div>
+        <form id="faqAdd" class="mt-3 flex flex-col gap-2">
+          <input id="faqQ" maxlength="300" class="rounded-lg border border-line bg-surface px-3 py-2 text-sm" placeholder="Question, e.g. Do you clean offices?">
+          <textarea id="faqA" rows="2" maxlength="1000" class="resize-none rounded-lg border border-line bg-surface px-3 py-2 text-sm" placeholder="Answer, in your words. No prices or offers you don't want quoted."></textarea>
+          <div><button type="submit" class="h-9 rounded-lg bg-accent px-4 text-sm font-medium text-accent-fg">Add to FAQ</button></div>
+        </form>`;
+    } catch (e) {
+      root.innerHTML = errorBox(e.message, "inbox");
+    }
+  }
+  async function renderInbox(arg) {
+    renderFaq();
+    const list = $("inboxList"), pane = $("inboxThread");
+    list.innerHTML = `<div class="space-y-3 p-3">${skeleton()}${skeleton()}</div>`;
+    let rows = [];
+    try {
+      rows = await api("/api/inbox");
+    } catch (e) {
+      list.innerHTML = `<div class="p-2">${errorBox(e.message, "inbox")}</div>`;
+      pane.innerHTML = "";
+      return;
+    }
+    state.unreadDms = rows.reduce((n, c) => n + c.unread, 0);
+    renderNav();
+    if (!rows.length) {
+      list.innerHTML = `<p class="p-6 text-center text-sm text-muted">No messages yet. When someone messages your Page, the conversation appears here.</p>`;
+      pane.innerHTML = `<p class="text-sm text-muted">DMs arrive through the Meta webhook (POST /webhooks/meta). Settings shows whether it is configured.</p>`;
+      return;
+    }
+    const current = arg || threadKey(rows[0]);
+    list.innerHTML = `<div class="divide-y divide-line">${rows.map((c) => `
+      <a href="#inbox/${threadKey(c)}" class="block rounded-lg px-3 py-3 ${threadKey(c) === current ? "bg-accent-soft" : "hover:bg-accent-soft"}">
+        <div class="flex items-center justify-between gap-2"><span class="text-sm font-medium">${who(c.customer_id)}</span>
+          ${c.unread ? `<span class="rounded-full bg-warn/15 px-1.5 text-[11px] font-semibold text-warn">${c.unread}</span>` : `<span class="text-xs text-muted">${ago(c.last_at)}</span>`}</div>
+        <div class="text-xs text-muted">${PLATFORM_DM[c.platform] || esc(c.platform)}${c.last_from === "page" ? " · replied" : ""}${c.needs_person ? ' · <span class="font-medium text-warn">needs a person</span>' : ""}</div>
+        <div class="truncate text-sm text-muted">${esc(c.last_text || "(no text)")}</div>
+      </a>`).join("")}</div>`;
+    const [platform, page, customer] = current.split("~").map(decodeURIComponent);
+    pane.innerHTML = skeleton("h-40");
+    try {
+      const t = await api(`/api/inbox/${encodeURIComponent(platform)}/${encodeURIComponent(page)}/${encodeURIComponent(customer)}`);
+      const canReply = t.window.state === "open" || (t.window.state === "human_agent" && state.status?.dm?.human_agent_enabled);
+      pane.innerHTML = `
+        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div><div class="font-medium">${who(t.customer_id)}</div><div class="text-xs text-muted">${PLATFORM_DM[t.platform] || esc(t.platform)} · ${t.messages.length} message(s)</div></div>
+          ${windowBadge(t.window)}
+        </div>
+        <div id="inboxMsgs" class="inbox-thread">${t.messages.map((m) => `
+          <div class="bubble ${m.is_echo ? "bubble-out" : "bubble-in"}">${esc(m.text || (m.kind === "postback" ? "(button tap)" : "(attachment or sticker)"))}</div>
+          <div class="bubble-meta ${m.is_echo ? "out" : "in"}">${m.is_echo ? (m.sent_by === "agent" ? "Milo bot" : "You") + (m.status === "dry_run" ? " · dry run, not sent" : "") : (m.kind === "postback" ? "Button" : "Customer")} · ${ago(m.sent_at || m.received_at)}${!m.is_echo && m.agent_action ? ` · bot: ${esc(AGENT_ACTION[m.agent_action] || m.agent_action)}${m.agent_note ? " (" + esc(m.agent_note) + ")" : ""}` : ""}</div>`).join("")}</div>
+        ${draftBox(t, canReply)}
+        <form id="inboxReply" class="mt-3 flex items-end gap-2" data-key="${esc(current)}">
+          <textarea id="inboxText" rows="2" maxlength="2000" class="flex-1 resize-none rounded-lg border border-line bg-surface px-3 py-2 text-sm" placeholder="${canReply ? "Write a reply…" : "Reply window closed"}" ${canReply ? "" : "disabled"}></textarea>
+          <button type="submit" class="h-10 rounded-lg bg-accent px-4 text-sm font-medium text-accent-fg" ${canReply ? "" : "disabled"}>Send</button>
+        </form>
+        <p class="mt-2 text-xs text-muted">${state.status?.meta_dry_run ? "Dry run: replies are saved here but not sent to Meta." : "Replies are sent as your Page through Meta's Send API."}</p>`;
+      const box = $("inboxMsgs");
+      box.scrollTop = box.scrollHeight;
+    } catch (e) {
+      pane.innerHTML = errorBox(e.message, "inbox");
+    }
+  }
+  document.body.addEventListener("click", async (e) => {
+    const t = e.target.closest("[data-use-draft],[data-suggest],[data-faq-sample],[data-faq-del]");
+    if (!t) return;
+    try {
+      if (t.matches("[data-use-draft]")) { $("inboxText").value = $("draftText").textContent; $("inboxText").focus(); return; }
+      t.disabled = true;
+      if (t.matches("[data-suggest]")) {
+        const [platform, page, customer] = t.dataset.suggest.split("~").map(decodeURIComponent);
+        await api(`/api/inbox/${encodeURIComponent(platform)}/${encodeURIComponent(page)}/${encodeURIComponent(customer)}/suggest`, { method: "POST" });
+        return renderInbox(t.dataset.suggest);
+      }
+      if (t.matches("[data-faq-sample]")) { const r = await api("/api/faq/sample", { method: "POST" }); toast(r.added ? `Added ${r.added} sample entries` : "Sample FAQ already loaded"); }
+      if (t.matches("[data-faq-del]")) { await api(`/api/faq/${t.dataset.faqDel}`, { method: "DELETE" }); toast("FAQ entry deleted"); }
+      state.status = null; renderFaq();
+    } catch (err) { toast(err.message, "error"); t.disabled = false; }
+  });
+  document.body.addEventListener("submit", async (e) => {
+    if (e.target.id !== "faqAdd") return;
+    e.preventDefault();
+    const question = $("faqQ").value.trim(), answer = $("faqA").value.trim();
+    if (question.length < 3 || answer.length < 2) return toast("Write a question and an answer", "error");
+    try { await api("/api/faq", { method: "POST", body: JSON.stringify({ question, answer }) }); toast("Added to FAQ"); state.status = null; renderFaq(); }
+    catch (err) { toast(err.message, "error"); }
+  });
+  document.body.addEventListener("submit", async (e) => {
+    if (e.target.id !== "inboxReply") return;
+    e.preventDefault();
+    const key = e.target.dataset.key, text = $("inboxText").value.trim();
+    if (!text) return;
+    const [platform, page, customer] = key.split("~").map(decodeURIComponent);
+    const btn = e.target.querySelector("button");
+    btn.disabled = true;
+    try {
+      await api(`/api/inbox/${encodeURIComponent(platform)}/${encodeURIComponent(page)}/${encodeURIComponent(customer)}/reply`, { method: "POST", body: JSON.stringify({ text }) });
+      toast(state.status?.meta_dry_run ? "Saved (dry run, not sent to Meta)" : "Reply sent");
+      renderInbox(key);
+    } catch (err) {
+      toast(err.message, "error");
+      btn.disabled = false;
+    }
+  });
+
   // =====================================================================
   // SETTINGS
   // =====================================================================
@@ -1125,6 +1306,7 @@
             ${check(true, "Spending", s.meta_dry_run ? "Dry run: nothing can spend." : s.spend.allowed ? `ALLOWED (META_ALLOW_SPEND=true). Caps: ${inr(s.spend.max_daily_budget_inr)}/day per campaign, ${inr(s.spend.max_total_daily_budget_inr)}/day in total. Running now: ${inr(s.spend.live_daily_budget_inr)}/day.` : `Off (META_ALLOW_SPEND=false): publishing creates campaigns on Meta but keeps them paused, so nothing is charged. Cap ${inr(s.spend.max_daily_budget_inr)}/day per campaign.`)}
             ${s.image_generation ? check(s.image_generation.configured, "Ad image generation", s.image_generation.configured ? `FLUX.1 [schnell] on Cloudflare Workers AI (${esc(s.image_generation.model)}). Used today: ${s.image_generation.used_today} of ${s.image_generation.daily_limit} (IMAGE_DAILY_LIMIT).` : "Add CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN to .env (free Workers AI account). Without them, upload images yourself.") : ""}
             ${check(s.instagram_account_set || s.meta_dry_run, "Instagram", s.instagram_account_set ? "Instagram account set (META_INSTAGRAM_ACCOUNT_ID)." : "Found automatically from the Page's linked Instagram account at publish time; set META_INSTAGRAM_ACCOUNT_ID to fix it.")}
+            ${s.dm ? check(s.dm.webhook_configured, "DM webhook (Inbox)", s.dm.webhook_configured ? `Receiving Messenger / Instagram DMs at /webhooks/meta. ${s.dm.unread} unread. Replies use ${s.dm.page_token_set ? "META_PAGE_ACCESS_TOKEN" : "a Page token fetched with META_ACCESS_TOKEN"}${s.dm.human_agent_enabled ? "; HUMAN_AGENT replies on" : ""}.` : "Add META_APP_SECRET and META_WEBHOOK_VERIFY_TOKEN to .env and connect the webhook in the Meta app (README: DM webhook).") : ""}
             ${check(s.database_ok, "Database (MongoDB)", s.database_ok ? "Connected. Campaigns, approvals, metrics and activity are stored there." : `Not reachable: ${esc(s.database_error)}. Check MONGODB_URI in .env and that your IP is allowed in Atlas (Network Access).`)}
             ${s.research ? check(s.research.enabled && s.research.key_set, "Web research (Tavily)", !s.research.enabled ? "Turned off (RESEARCH_ENABLED=false). Milo writes copy without research." : s.research.key_set ? `Recent context from the past ${esc(s.research.time_range)}, up to ${s.research.max_results} sources per search.` : "Add TAVILY_API_KEY to .env (free: 1,000 credits/month). Without it Milo writes copy unresearched.") : ""}
             ${check(s.metrics_provider === "meta", "Metrics source", s.metrics_provider === "meta" ? `Real Meta Insights every ${s.metrics_poll_minutes} min (paused ads have no new results).` : `Simulated demo data (dry run), refreshed every ${s.metrics_poll_minutes} min.`)}
@@ -1169,14 +1351,14 @@
   // =====================================================================
   function route() {
     const [view, arg] = (location.hash.slice(1) || "dashboard").split("/");
-    const known = ["dashboard", "campaigns", "campaign", "approvals", "analytics", "activity", "settings"];
+    const known = ["dashboard", "campaigns", "campaign", "approvals", "inbox", "analytics", "activity", "settings"];
     const v = known.includes(view) ? view : "dashboard";
     document.querySelectorAll(".view").forEach((el) => el.classList.add("hidden"));
     $("view-" + v).classList.remove("hidden");
     $("drawer").classList.add("hidden");
     renderNav();
     window.scrollTo(0, 0);
-    ({ dashboard: renderDashboard, campaigns: renderCampaigns, campaign: () => renderCampaign(arg), approvals: renderApprovals, analytics: renderAnalytics, activity: renderActivity, settings: renderSettings })[v]();
+    ({ dashboard: renderDashboard, campaigns: renderCampaigns, campaign: () => renderCampaign(arg), approvals: renderApprovals, inbox: () => renderInbox(arg), analytics: renderAnalytics, activity: renderActivity, settings: renderSettings })[v]();
   }
   function refreshCurrent() { route(); }
 

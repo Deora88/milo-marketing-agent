@@ -24,7 +24,7 @@ cp .env.example .env         # MONGODB_URI + OPENROUTER_API_KEY (+ optional TAVI
                              # while META_DRY_RUN=true
 uv run uvicorn app.main:app --reload
 # open http://localhost:8000
-uv run pytest                # 85 tests, in-memory MongoDB; ignores your .env; never calls the LLM, Meta or Tavily
+uv run pytest                # 110 tests, in-memory MongoDB; ignores your .env; never calls the LLM, Meta or Tavily
 ```
 No `uv`? `pip install uv` first (Windows: `python -m pip install uv`).
 
@@ -65,16 +65,18 @@ app/
   meta/              throttled Meta client (usage headers, backoff, dry-run) + campaign builder
   metrics/           MetricsProvider interface: Meta Insights (live) and simulated (dry run / demo)
   jobs/              APScheduler: pulls metrics every 15 min (per-campaign failures don't stop the pull)
-  db/                MongoDB: models (Campaign, Approval, MetricSnapshot, AuditLog) + store (ids, atomic claim)
+  db/                MongoDB: models (Campaign, Approval, MetricSnapshot, AuditLog, InboundMessage, FaqEntry, Lead) + store (ids, atomic claim)
+  dm/inbox.py        DM conversations, Meta's reply window, replies through the Send API
+  dm/agent.py        DM bot: FAQ answers, lead capture, hand-off (drafts unless DM_AUTOREPLY=true)
   security.py        Host allow-list, X-Milo-Client header on changes (CSRF), optional API token
   util/redact.py     masks tokens and keys in error text
-  api/               routes: chat (SSE), campaigns (+ change requests), approvals, insights (status, summary, audit)
+  api/               routes: chat (SSE), campaigns (+ change requests), approvals, insights (status, summary, audit), webhooks (Meta DMs), inbox (DM threads + replies), faq (bot FAQ + leads)
 web/
   index.html         the Milo UI (single file, served at /)
   milo.css           prebuilt Tailwind styles; tokens in tailwind.config.js
-tests/               85 tests: MCP tools + approval gate (caps, spend switch, CSRF, double approve, failures), MCP over
-                     stdio, HTTP API, chat streaming, Meta client + campaign builder, previews, optimizer, research, image generation
-                     (in-memory MongoDB via mongomock, HTTP mocked with respx; a personal .env is ignored)
+tests/               110 tests: MCP tools + approval gate (caps, spend switch, CSRF, double approve, failures), MCP over
+                     stdio, HTTP API, chat streaming, Meta client + campaign builder, previews, optimizer, research, image generation,
+                     DM webhook + inbox + bot (in-memory MongoDB via mongomock, HTTP mocked with respx; a personal .env is ignored)
 ```
 
 ## Modes and spend safety
@@ -187,6 +189,14 @@ options, each with a "based on" note. The chat shows the sources under the reply
 | POST | `/api/campaigns/{id}/image` · GET same | Upload (JPG/PNG ≤ 8 MB) / view the ad image; sent to Meta on publish |
 | POST | `/api/campaigns/{id}/generate-image` | Generate the ad image with FLUX.1 [schnell] (Cloudflare Workers AI); body `{prompt}` optional; draft only |
 | GET | `/api/campaigns/{id}/preview?format=` | Read-only: Meta's rendering of the ad (Facebook mobile/desktop feed, Instagram feed/story), shown on the campaign page |
+| GET | `/webhooks/meta` | Meta's webhook subscribe check: echoes `hub.challenge` when `hub.verify_token` matches `META_WEBHOOK_VERIFY_TOKEN` |
+| POST | `/webhooks/meta` | Incoming Messenger / Instagram DMs; `X-Hub-Signature-256` checked with `META_APP_SECRET`; stored once per message id |
+| GET | `/api/inbox` | DM conversations, newest first: unread count, last message, reply-window state |
+| GET | `/api/inbox/{platform}/{page_id}/{customer_id}` | One conversation's messages (marks new ones read) |
+| POST | `/api/inbox/{platform}/{page_id}/{customer_id}/reply` | Reply as the Page via Meta's Send API; body `{text}`; 409 outside the reply window |
+| POST | `/api/inbox/{platform}/{page_id}/{customer_id}/suggest` | Ask the DM bot for a draft reply to the latest message (never sends) |
+| GET · POST | `/api/faq` · PUT/DELETE `/api/faq/{id}` | The bot's FAQ (it answers only from these); `POST /api/faq/sample` loads the sample home-cleaning FAQ |
+| GET | `/api/leads` | Contacts captured from DMs (name, phone, conversation) |
 | GET | `/api/status` | Model, database check, dry-run, spend switch and caps, Meta, metrics, optimizer, research, image generation (model, used today) — no secrets |
 | GET | `/api/summary` | Dashboard KPIs and daily spend (last 7 days) |
 | GET | `/api/audit` | Activity log |
@@ -219,6 +229,64 @@ Run it on its own: `uv run python -m app.mcp_server.server` (stdio).
 }
 ```
 Approvals requested from Claude Desktop still appear in the Milo dashboard and need your click.
+
+## DM webhook (step 1 of DM handling)
+Meta sends every Messenger and Instagram DM to the Page to `POST /webhooks/meta`. Milo checks the signature,
+stores the message in `inbound_messages` (one row per Meta message id, so retries are dropped) and answers 200
+at once. It does not reply yet: the DM agent (FAQ, lead capture, hand-off to a human) is the next step. Design:
+the "Milo Next Milestone: DMs and Client Accounts" write-up on PR #2.
+
+- **Security:** `/webhooks/` is the only path that skips the Host allow-list, because Meta calls it from the
+  internet. Each event must carry `X-Hub-Signature-256` = HMAC-SHA256 of the raw body with the app secret, checked
+  before parsing (401 otherwise). It has no `/api` prefix and can only store messages; `/api/*` stays localhost-only.
+- **Setup (test with your own account, no App Review needed):**
+  1. `.env`: `META_APP_SECRET` and `META_APP_ID` (App Dashboard > App settings > Basic) and
+     `META_WEBHOOK_VERIFY_TOKEN` (any long random string you choose).
+  2. Public HTTPS for local Milo, for example `cloudflared tunnel --url http://localhost:8000` (prints an
+     `https://….trycloudflare.com` address). Self-signed certificates are not accepted by Meta.
+  3. App Dashboard > Messenger (or Webhooks) > Callback URL `https://<tunnel>/webhooks/meta`, Verify token = the
+     same string, then subscribe the Page to `messages`, `messaging_postbacks` and `message_echoes`. Without
+     `message_echoes`, replies a person types in Business Suite or the Instagram app never reach Milo, and the bot
+     can't tell that a person has taken the conversation. For Instagram DMs, also subscribe the `instagram` object.
+  4. Message the Milo Test Page from an account that has a role on the app; the message appears in
+     `inbound_messages` and Activity shows "DM received". Messages from the public need Advanced Access for
+     `pages_messaging` (App Review).
+
+## Inbox (step 2 of DM handling)
+The **Inbox** page lists every Messenger / Instagram conversation with your Page and lets a person reply. Replies
+go out as the Page through Meta's Send API (`POST /{page_id}/messages`) and are stored in the same thread.
+
+- **Reply window (Meta policy):** a reply is allowed within 24 hours of the person's last message, or up to 7 days
+  after their first message from a click-to-Messenger ad. After that, only a person may reply, with the
+  `HUMAN_AGENT` tag, up to 7 days, and only if Meta has granted the app the Human Agent feature
+  (`META_HUMAN_AGENT_ENABLED=true`). Outside these windows Milo refuses to send, and the Inbox says why.
+- **Token:** replies need a Page access token with `pages_messaging`. Set `META_PAGE_ACCESS_TOKEN`, or Milo fetches
+  one from the Page with `META_ACCESS_TOKEN`.
+- **Dry run:** with `META_DRY_RUN=true`, replies are saved in the thread (marked "dry run, not sent") and nothing
+  is sent to Meta.
+- **Not yet:** automatic replies. The DM agent (FAQ, lead capture, hand-off) is step 3; it will use the same
+  sending code with the same window rules and can never use the human tag.
+
+## DM bot (step 3 of DM handling)
+For every new DM the bot does one of three things, logged in Activity and shown in the Inbox:
+
+| Message | Bot action |
+| --- | --- |
+| Covered by the FAQ ("Which areas do you cover?") | **Answer** built only from those FAQ entries |
+| Contains an Indian mobile number or asks for a callback | **Lead** saved (`/api/leads`), receipt confirmed |
+| Anything else (prices not in the FAQ, complaints, unclear) | **Hand-off**: "A team member will reply soon", thread marked "needs a person" |
+
+- **Drafts by default:** `DM_AUTOREPLY=false` means the bot only drafts; the Inbox shows "Bot draft" with
+  **Use draft**, and a person clicks Send. `DM_AUTOREPLY=true` lets it send by itself.
+- **Guardrails:** separate from the ads agent, with no tools that can change ads. DM text is fenced as untrusted
+  data; the model must cite FAQ ids that exist, otherwise the reply becomes a hand-off (no invented prices).
+  Phone numbers are detected in code. A model error is a hand-off. It obeys Meta's reply window, never uses the
+  `HUMAN_AGENT` tag, says it is automated in its first message, and stays out of a conversation once a person
+  has replied.
+- **FAQ:** edit it under the Inbox ("Bot FAQ"). **Load sample FAQ** adds six labelled sample answers for the demo
+  home-cleaning business; replace them with the real business's words.
+- **Settings:** `DM_AGENT_ENABLED` (default true), `DM_AUTOREPLY` (default false), `DM_BUSINESS_NAME`. It uses the
+  same model as chat (`MILO_MODEL`).
 
 ## Future work
 - **n8n notifications (optional):** call an n8n webhook to send Telegram/email alerts when an approval is waiting
