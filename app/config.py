@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     # dm_autoreply=false (default): it drafts a reply in the Inbox and a person clicks Send.
     dm_agent_enabled: bool = True
     dm_autoreply: bool = False
+    # A bot hand-off (question not in the FAQ) keeps the bot out of that conversation for this many hours, then
+    # it may answer FAQ questions again. A person replying as the Page keeps it out until "Hand back to bot".
+    dm_handoff_hours: int = 24
     dm_business_name: str = "Milo Demo Home Care"
 
     # Spend safety (live ad account). With allow_spend=false Milo creates and edits campaigns on Meta but keeps
@@ -72,6 +75,10 @@ class Settings(BaseSettings):
     research_enabled: bool = True
     research_time_range: str = "month"  # day | week | month | year
     research_max_results: int = 5
+
+    # Instagram posts (organic, not ads): Meta downloads the images/video from a public HTTPS address, so set
+    # this to the tunnel or server address that reaches Milo, e.g. https://name.ngrok-free.dev (no trailing /).
+    public_base_url: str = ""
 
     # Ad image generation (Cloudflare Workers AI, FLUX.1 [schnell]; free daily allowance)
     cloudflare_account_id: str = ""

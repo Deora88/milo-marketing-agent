@@ -4,27 +4,35 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Milo · Meta ads agent</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%2335586a'/%3E%3Cpath d='M12 5l1.6 4.6H18l-3.7 2.7 1.4 4.5L12 14l-3.7 2.8 1.4-4.5L6 9.6h4.4z' fill='%23f7f4ee'/%3E%3C/svg%3E" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%23F2542D'/%3E%3Cpath d='M12 5l1.6 4.6H18l-3.7 2.7 1.4 4.5L12 14l-3.7 2.8 1.4-4.5L6 9.6h4.4z' fill='%23f7f4ee'/%3E%3C/svg%3E" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/milo.css" />
   <style>
     html { -webkit-font-smoothing: antialiased; }
-    body { background: #f4f1ea; color: #1c1b19; }
+    body { background: #FAFAFA; color: #18181B; }
     h1, h2, h3 { text-wrap: balance; }
     button:not(:disabled), [role="button"]:not(:disabled) { cursor: pointer; }
     button:disabled { opacity: .55; cursor: not-allowed; }
-    :focus-visible { outline: 2px solid #35586a; outline-offset: 2px; border-radius: 8px; }
-    .card { border-radius: 20px; border: 1px solid #e4dfd4; background: #fffcf7; box-shadow: 0 1px 2px rgb(28 27 25 / 0.04), 0 10px 28px rgb(28 27 25 / 0.05); }
+    :focus-visible { outline: 2px solid #C2410C; outline-offset: 2px; border-radius: 8px; }
+    .card { border-radius: 18px; border: 1px solid #E4E4E7; background: #FFFFFF; box-shadow: 0 1px 2px rgb(24 24 27 / 0.04), 0 12px 32px -20px rgb(24 24 27 / 0.22); }
+    .font-display { font-weight: 700; letter-spacing: -0.02em; }
+    h1.font-display { font-weight: 800; letter-spacing: -0.03em; }
+    .card-light { background: #FFF7F3; border-color: #FBD5C6; color: #18181B; }
+    .card-light .text-muted, .card-light .text-subtle { color: #52525B; }
+    #perfStats .font-display { color: #18181B; }
+    #pendingList > div { border-radius: 18px; padding: 1.1rem 1.25rem; background: #FFFFFF; box-shadow: 0 12px 32px -22px rgb(24 24 27 / 0.3); }
+    #pendingList > div p.text-sm { font-size: 1rem; font-weight: 600; color: #18181B; }
+    #pendingList button { height: 44px; padding: 0 1.1rem; border-radius: 12px; }
     .md p { margin: 0 0 6px; } .md p:last-child { margin-bottom: 0; }
     .md ul, .md ol { margin: 4px 0 6px; padding-left: 18px; } .md ul { list-style: disc; } .md ol { list-style: decimal; }
-    .md code { background: #efeae0; padding: 0 4px; border-radius: 4px; font-size: .9em; }
-    .dots span { display: inline-block; width: 6px; height: 6px; border-radius: 9999px; background: #8f8a81; animation: bounce 1s infinite; }
+    .md code { background: #F4F4F5; padding: 0 4px; border-radius: 4px; font-size: .9em; }
+    .dots span { display: inline-block; width: 6px; height: 6px; border-radius: 9999px; background: #71717A; animation: bounce 1s infinite; }
     .dots span:nth-child(2) { animation-delay: .15s; } .dots span:nth-child(3) { animation-delay: .3s; }
     @keyframes bounce { 0%, 80%, 100% { transform: translateY(0); opacity: .5; } 40% { transform: translateY(-3px); opacity: 1; } }
     .spin { animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
-    .skeleton { background: linear-gradient(90deg, #efeae0 25%, #f6f2ea 50%, #efeae0 75%); background-size: 200% 100%; animation: shimmer 1.2s infinite; border-radius: 8px; }
+    .skeleton { background: linear-gradient(90deg, #F4F4F5 25%, #FAFAFA 50%, #F4F4F5 75%); background-size: 200% 100%; animation: shimmer 1.2s infinite; border-radius: 8px; }
     @keyframes shimmer { to { background-position: -200% 0; } }
     #toast { position: fixed; right: 1rem; bottom: 1rem; z-index: 60; transform: translateY(120%); opacity: 0; transition: transform .25s cubic-bezier(.22,1,.36,1), opacity .2s; }
     #toast.show { transform: translateY(0); opacity: 1; }
@@ -33,30 +41,186 @@
     .inbox-list { max-height: 70vh; overflow-y: auto; }
     .inbox-thread { display: flex; flex-direction: column; gap: .5rem; max-height: 52vh; min-height: 220px; overflow-y: auto; padding: .25rem; }
     .bubble { max-width: 78%; padding: .5rem .75rem; border-radius: 16px; font-size: .875rem; white-space: pre-wrap; overflow-wrap: anywhere; }
-    .bubble-in { align-self: flex-start; background: #efeae0; border-bottom-left-radius: 4px; }
-    .bubble-out { align-self: flex-end; background: #35586a; color: #fff; border-bottom-right-radius: 4px; }
-    .bubble-meta { font-size: 11px; color: #8f8a81; }
+    .bubble-in { align-self: flex-start; background: #F4F4F5; border-bottom-left-radius: 4px; }
+    .bubble-out { align-self: flex-end; background: #C2410C; color: #fff; border-bottom-right-radius: 4px; }
+    .bubble-meta { font-size: 11px; color: #71717A; }
     .bubble-meta.out { align-self: flex-end; } .bubble-meta.in { align-self: flex-start; }
-    @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+    .break-all { word-break: break-all; } .select-all { user-select: all; }
+    /* ---- "Hi, I'm Milo" splash ---- */
+    #intro, #intro button { font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    #intro { position: fixed; inset: 0; z-index: 80; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; padding: 40px 20px; text-align: center; background: #FFFFFF; transition: opacity .45s ease, visibility .45s; }
+    #intro.gone { opacity: 0; visibility: hidden; pointer-events: none; }
+    #intro .i-avatar { width: 92px; height: 92px; border-radius: 9999px; background: #F2542D; color: #fff; display: grid; place-items: center; font-size: 40px; font-weight: 800; position: absolute; inset: 0; }
+    #intro .i-hub { position: relative; width: 92px; height: 92px; animation: iUp .6s ease-out both; }
+    #intro .i-ring { position: absolute; inset: 0; border-radius: 9999px; border: 2px solid #F2542D; animation: iRing 2.2s ease-out infinite; }
+    #intro .i-ring.b { animation-delay: 1.1s; }
+    #intro canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+    #intro > *:not(canvas) { position: relative; z-index: 1; }
+    #intro h1 { text-shadow: 0 2px 24px rgb(255 255 255 / .9); }
+    #intro p { color: #3F3F46; text-shadow: 0 0 12px #fff, 0 0 2px #fff; }
+    #intro .i-status, #intro .i-hint { text-shadow: 0 0 8px #fff, 0 0 2px #fff; }
+    #intro { cursor: default; }
+    #intro h1 { margin: 0; font-size: clamp(44px, 8vw, 68px); font-weight: 800; letter-spacing: -0.04em; line-height: 1.05; animation: iUp .6s .35s ease-out both; }
+    #intro .i-caret { color: #F2542D; animation: iBlink 1s steps(1) infinite; }
+    #intro p { margin: 0; max-width: 560px; font-size: 18px; line-height: 1.55; color: #52525B; animation: iUp .6s .7s ease-out both; }
+    #intro .i-foot { display: flex; flex-direction: column; align-items: center; gap: 16px; animation: iUp .6s 1.05s ease-out both; }
+    #intro .i-status { display: flex; align-items: center; gap: 8px; font-size: 14px; color: #3F3F46; }
+    #intro .i-dot { width: 8px; height: 8px; border-radius: 9999px; background: #15803D; }
+    #intro .i-track { width: 220px; height: 4px; border-radius: 2px; background: #F4F4F5; overflow: hidden; }
+    #intro .i-bar { height: 4px; width: 0; background: #F2542D; animation: iGrow 30s linear forwards; }
+    #intro button { height: 48px; padding: 0 24px; border-radius: 14px; border: 0; background: #18181B; color: #fff; font-weight: 700; font-size: 15px; }
+    #intro .i-hint { font-size: 12px; color: #71717A; }
+    @keyframes iUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+    @keyframes iPulse { 0% { box-shadow: 0 0 0 0 rgb(242 84 45 / .45); } 70% { box-shadow: 0 0 0 22px rgb(242 84 45 / 0); } 100% { box-shadow: 0 0 0 0 rgb(242 84 45 / 0); } }
+    @keyframes iRing { 0% { transform: scale(1); opacity: .5; } 100% { transform: scale(2.6); opacity: 0; } }
+    @keyframes iBlink { 50% { opacity: 0; } }
+    @keyframes iGrow { to { width: 100%; } }
+    @media (prefers-reduced-motion: reduce) { *:not(#intro):not(#intro *) { transition: none !important; animation: none !important; } }
+    .ig-phone { width: 100%; max-width: 300px; margin: 0 auto; border: 1px solid #E4E4E7; border-radius: 22px; overflow: hidden; background: #fff; }
+    .ig-tall { position: relative; aspect-ratio: 9 / 16; background: #111; overflow: hidden; }
+    .ig-tall .bg { position: absolute; inset: -20px; background-size: cover; background-position: center; filter: blur(18px) brightness(.65); }
+    .ig-tall img, .ig-tall video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+    .ig-feed img { width: 100%; display: block; max-height: 375px; object-fit: cover; }
+    .ig-thumb { position: relative; width: 84px; height: 84px; border-radius: 10px; overflow: hidden; border: 1px solid #E4E4E7; }
+    .ig-thumb img { width: 100%; height: 100%; object-fit: cover; }
+    .text-white { color: #fff; } .hover\:bg-danger\/5:hover { background-color: rgba(185,28,28,.05); }
+    .seg button[aria-pressed="true"] { background: #FFF1EC; color: #C2410C; font-weight: 500; }
   </style>
 </head>
 <body class="font-sans bg-bg text-ink min-h-screen">
-  <header class="sticky top-0 z-30 border-b border-line bg-elevated/90 backdrop-blur-sm">
-    <div class="mx-auto flex h-14 max-w-[1440px] items-center gap-3 px-4">
-      <button id="menuBtn" class="lg:hidden grid size-10 place-items-center rounded-lg hover:bg-accent-soft" aria-label="Open menu">
+  <div id="intro" role="dialog" aria-modal="true" aria-labelledby="introTitle">
+    <canvas id="introNet" aria-hidden="true"></canvas>
+    <div class="i-hub" aria-hidden="true"><span class="i-ring"></span><span class="i-ring b"></span><div class="i-avatar"><svg width="44" height="44" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.8l2.8 5.9 6.4.8-4.7 4.4 1.2 6.4L12 17.2l-5.7 3.1 1.2-6.4-4.7-4.4 6.4-.8z"/></svg></div></div>
+    <h1 id="introTitle">Milo</h1>
+    <p>Hi, I plan, watch and improve your Facebook and Instagram ads. Nothing goes live until you say yes.</p>
+    <div class="i-foot">
+      <div class="i-status"><span class="i-dot" aria-hidden="true"></span><span id="introStatus">Connected · 0 signals linked to Milo</span></div>
+      <button type="button" id="introGo">Show me today →</button>
+      <span class="i-hint">Move your mouse to pull the network · click to scatter it</span>
+    </div>
+  </div>
+  <script>
+  // "Hi, I'm Milo" splash: shown once per browser tab session, stays until you click "Show me today" (or press Enter/Esc).
+  (function () {
+    var el = document.getElementById("intro");
+    var seen = false; try { seen = sessionStorage.getItem("milo-intro-seen") === "1"; } catch (e) {}
+    if (seen) { el.remove(); return; }
+    var done = false, gathering = false, net = startNetwork();
+    function close(gather) {
+      if (done || gathering) return;
+      if (gather && net) { gathering = true; net.gather(); setTimeout(function () { gathering = false; close(false); }, 1400); return; }
+      done = true;
+      if (net) net.stop();
+      try { sessionStorage.setItem("milo-intro-seen", "1"); } catch (e) {}
+      el.classList.add("gone");
+      document.removeEventListener("keydown", onKey);
+      setTimeout(function () { el.remove(); }, 500);
+    }
+    function onKey(e) { if (e.key === "Escape") close(false); else if (e.key === "Enter") { e.preventDefault(); close(true); } }
+    document.getElementById("introGo").addEventListener("click", function (e) { e.stopPropagation(); close(true); });
+    document.addEventListener("keydown", onKey);
+    setTimeout(function () { var b = document.getElementById("introGo"); if (b && !done) b.focus(); }, 1100);
+    // Signal network: floating nodes and labelled chips that link up to Milo.
+    function startNetwork() {
+      // Same behaviour as the fx2 demo clip: free-floating nodes that bounce off the edges,
+      // pulled by the cursor, scattered by a click, gathered into Milo by "Show me today".
+      var c = document.getElementById("introNet"); if (!c || !c.getContext) return null;
+      var ctx = c.getContext("2d"), dpr = Math.min(2, window.devicePixelRatio || 1), W = 0, H = 0, raf = 0, gather = 0, calmUntil = 0, shown = -1;
+      var still = false; // the splash animation is wanted even when Windows "Animation effects" is off
+      var mouse = { x: null, y: null };
+      var status = document.getElementById("introStatus");
+      function size() { W = el.clientWidth; H = el.clientHeight; c.width = W * dpr; c.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); }
+      size(); window.addEventListener("resize", size);
+      var labels = [["Facebook", "#EFF6FF", "#1D4ED8"], ["Instagram", "#FDF2F8", "#9D174D"], ["DMs", "#FDF2F8", "#9D174D"], ["\u20b9 Budget", "#FFF1EC", "#C2410C"], ["CTR", "#F0FDF4", "#166534"], ["Clicks", "#F0FDF4", "#166534"], ["Approvals", "#FFF1EC", "#C2410C"], ["Optimizer", "#F4F4F5", "#3F3F46"], ["Campaigns", "#EFF6FF", "#1D4ED8"]];
+      var nodes = [];
+      for (var i = 0; i < 60; i++) nodes.push({ x: Math.random() * W, y: Math.random() * H, vx: (Math.random() - .5) * 1.2, vy: (Math.random() - .5) * 1.2, l: labels[i] });
+      el.addEventListener("pointermove", function (e) { mouse.x = e.clientX; mouse.y = e.clientY; });
+      el.addEventListener("pointerleave", function () { mouse.x = mouse.y = null; });
+      el.addEventListener("pointerdown", function (e) {
+        if (e.target.closest && e.target.closest("button")) return;
+        nodes.forEach(function (n) { var dx = n.x - e.clientX, dy = n.y - e.clientY, d = Math.hypot(dx, dy) || 1, k = Math.max(0, 320 - d) * .06; n.vx += dx / d * k; n.vy += dy / d * k; });
+        calmUntil = performance.now() + 900; // let the scatter play out before the cursor pulls again
+        if (still) frame();
+      });
+      function hub() { var r = el.querySelector(".i-avatar").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }
+      function chip(n) {
+        ctx.font = "700 12px 'Plus Jakarta Sans', sans-serif";
+        var w = ctx.measureText(n.l[0]).width + 20, h = 26, x = n.x - w / 2, y = n.y - h / 2;
+        ctx.shadowColor = "rgba(24,24,27,.25)"; ctx.shadowBlur = 12; ctx.shadowOffsetY = 4;
+        ctx.fillStyle = n.l[1]; ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(x, y, w, h, 13); else ctx.rect(x, y, w, h);
+        ctx.fill(); ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+        ctx.fillStyle = n.l[2]; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(n.l[0], n.x, n.y + 1);
+      }
+      function frame() {
+        ctx.clearRect(0, 0, W, H);
+        var a = hub(), pulling = mouse.x !== null && performance.now() > calmUntil;
+        nodes.forEach(function (n) {
+          if (pulling) { var dx = mouse.x - n.x, dy = mouse.y - n.y, d = Math.hypot(dx, dy) || 1; if (d < 260) { n.vx += dx / d * .12; n.vy += dy / d * .12; } }
+          if (gather > 0) { n.vx += (a.x - n.x) * .006; n.vy += (a.y - n.y) * .006; }
+          n.vx *= .97; n.vy *= .97;
+          if (Math.hypot(n.vx, n.vy) < .25) { n.vx += (Math.random() - .5) * .2; n.vy += (Math.random() - .5) * .2; }
+          n.x += n.vx; n.y += n.vy;
+          if (n.x < 10 || n.x > W - 10) { n.vx *= -1; n.x = Math.max(10, Math.min(W - 10, n.x)); }
+          if (n.y < 10 || n.y > H - 10) { n.vy *= -1; n.y = Math.max(10, Math.min(H - 10, n.y)); }
+        });
+        ctx.lineWidth = 1;
+        for (var i = 0; i < nodes.length; i++) for (var j = i + 1; j < nodes.length; j++) {
+          var p = nodes[i], q = nodes[j], d = Math.hypot(p.x - q.x, p.y - q.y);
+          if (d < 140) { ctx.strokeStyle = "rgba(161,161,170," + (.5 * (1 - d / 140)) + ")"; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke(); }
+        }
+        var linked = 0;
+        nodes.forEach(function (n) {
+          if (n.l && Math.hypot(n.x - a.x, n.y - a.y) < Math.max(W, H) * .45) { linked++; ctx.strokeStyle = "rgba(242,84,45,.65)"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(n.x, n.y); ctx.stroke(); }
+          if (mouse.x !== null && Math.hypot(n.x - mouse.x, n.y - mouse.y) < 200) { ctx.strokeStyle = "rgba(37,99,235,.55)"; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(mouse.x, mouse.y); ctx.lineTo(n.x, n.y); ctx.stroke(); }
+        });
+        nodes.forEach(function (n) { if (n.l) chip(n); else { ctx.fillStyle = "#A1A1AA"; ctx.beginPath(); ctx.arc(n.x, n.y, 3, 0, 7); ctx.fill(); } });
+        // soft white glow behind the text block: the network fades out under the words instead of hitting a box
+        var tb = null;
+        ["#introTitle", "#intro p", "#intro .i-foot"].forEach(function (q) { var r = el.querySelector(q); if (!r) return; r = r.getBoundingClientRect(); tb = tb ? { l: Math.min(tb.l, r.left), t: Math.min(tb.t, r.top), r: Math.max(tb.r, r.right), b: Math.max(tb.b, r.bottom) } : { l: r.left, t: r.top, r: r.right, b: r.bottom }; });
+        if (tb) {
+          var cx = (tb.l + tb.r) / 2, cy = (tb.t + tb.b) / 2, rx = Math.min((tb.r - tb.l) / 2 + 70, W * .48), ry = (tb.b - tb.t) / 2 + 50;
+          ctx.save(); ctx.translate(cx, cy); ctx.scale(1, ry / rx);
+          var g = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
+          g.addColorStop(0, "rgba(255,255,255,.9)"); g.addColorStop(.5, "rgba(255,255,255,.75)"); g.addColorStop(.8, "rgba(255,255,255,.3)"); g.addColorStop(1, "rgba(255,255,255,0)");
+          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, rx, 0, 7); ctx.fill(); ctx.restore();
+        }
+        if (status && linked !== shown) { shown = linked; status.textContent = "Connected · " + linked + " signals linked to Milo"; }
+        if (gather > 0) gather--;
+        if (!still) raf = requestAnimationFrame(frame);
+      }
+      frame();
+      return {
+        gather: function () { gather = 90; },
+        stop: function () { cancelAnimationFrame(raf); window.removeEventListener("resize", size); },
+      };
+    }
+
+
+  })();
+  </script>
+  <div class="lg:flex lg:min-h-screen">
+  <aside class="hidden lg:flex sticky top-0 h-screen w-60 shrink-0 flex-col gap-1 border-r border-line bg-bg px-3 py-5" aria-label="Sidebar">
+    <a href="#dashboard" class="mb-4 flex items-center gap-2.5 px-2">
+      <span class="grid size-9 place-items-center rounded-full bg-brand text-base font-extrabold text-white"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.8l2.8 5.9 6.4.8-4.7 4.4 1.2 6.4L12 17.2l-5.7 3.1 1.2-6.4-4.7-4.4 6.4-.8z"/></svg></span>
+      <span class="leading-tight"><span class="block text-base font-bold">Milo</span><span class="block text-[11px] text-muted">Meta ads agent</span></span>
+    </a>
+    <nav class="flex flex-col gap-1" id="desktopNav" aria-label="Main"></nav>
+    <div class="mt-auto flex flex-col gap-2 px-1">
+      <span id="modePill" class="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1 text-[11px] text-muted"></span>
+      <span id="connPill" class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-medium bg-bg text-muted">Connecting…</span>
+      <p class="rounded-xl bg-ok/10 p-3 text-xs leading-relaxed text-ok"><strong>Nothing goes live</strong> without your tap. Milo drafts and asks first.</p>
+    </div>
+  </aside>
+  <header class="sticky top-0 z-30 border-b border-line bg-elevated/90 backdrop-blur-sm lg:hidden">
+    <div class="flex h-14 items-center gap-3 px-4">
+      <button id="menuBtn" class="grid size-11 place-items-center rounded-lg hover:bg-accent-soft" aria-label="Open menu">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
       </button>
-      <a href="#dashboard" class="flex items-center gap-2 font-medium">
-        <span class="grid size-7 place-items-center rounded-lg bg-accent text-accent-fg">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.8 5.5H19l-4.4 3.2 1.7 5.3L12 14.8 7.7 17l1.7-5.3L5 8.5h5.2z"/></svg>
-        </span>
-        <span class="font-display text-lg tracking-tight">Milo</span>
+      <a href="#dashboard" class="flex items-center gap-2 font-bold">
+        <span class="grid size-8 place-items-center rounded-full bg-brand text-sm font-extrabold text-white"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.8l2.8 5.9 6.4.8-4.7 4.4 1.2 6.4L12 17.2l-5.7 3.1 1.2-6.4-4.7-4.4 6.4-.8z"/></svg></span>
+        <span class="text-lg tracking-tight">Milo</span>
       </a>
-      <nav class="ml-6 hidden items-center gap-1 lg:flex" id="desktopNav" aria-label="Main"></nav>
-      <div class="ml-auto flex items-center gap-2">
-        <span id="modePill" class="hidden sm:inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1 text-[11px] text-muted"></span>
-        <span id="connPill" class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-medium bg-bg text-muted">Connecting…</span>
-      </div>
     </div>
   </header>
 
@@ -64,7 +228,7 @@
     <button class="absolute inset-0 bg-ink/20" id="drawerBackdrop" aria-label="Close menu"></button>
     <aside class="absolute left-0 top-0 flex h-full w-72 flex-col gap-2 bg-surface p-4 shadow-soft">
       <div class="mb-2 flex items-center justify-between">
-        <span class="font-display text-lg">Milo</span>
+        <span class="text-lg font-bold">Milo</span>
         <button id="drawerClose" class="grid size-10 place-items-center rounded-lg hover:bg-accent-soft" aria-label="Close">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
         </button>
@@ -73,58 +237,21 @@
     </aside>
   </div>
 
-  <main class="mx-auto max-w-[1440px] px-4 py-4 pb-10">
+  <main class="min-w-0 flex-1 px-4 py-6 pb-10 sm:px-6 lg:px-10 lg:py-8"><div class="mx-auto max-w-[1280px]">
     <!-- ============ DASHBOARD ============ -->
     <section id="view-dashboard" class="view hidden">
-      <div class="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)_300px]">
-        <aside class="flex flex-col gap-4">
-          <div class="card p-4">
-            <div class="flex items-start justify-between">
-              <h2 class="font-display text-base font-medium">AI agent status</h2>
-              <span id="agentBadge" class="rounded-full bg-bg px-2 py-0.5 text-[11px] font-medium text-muted">…</span>
-            </div>
-            <div class="mt-3 flex items-center gap-3">
-              <div class="grid size-10 place-items-center rounded-lg bg-accent-soft text-accent">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.8 5.5H19l-4.4 3.2 1.7 5.3L12 14.8 7.7 17l1.7-5.3L5 8.5h5.2z"/></svg>
-              </div>
-              <div class="min-w-0">
-                <div class="text-sm font-medium">Milo</div>
-                <p class="text-xs text-muted">Drafts, monitors, asks before acting</p>
-              </div>
-            </div>
-            <div id="agentDetails" class="mt-3 space-y-1 text-xs text-muted"></div>
+      <div class="grid gap-8 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <section class="flex min-w-0 flex-col gap-5">
+          <div>
+            <div id="todayDate" class="text-sm font-semibold text-accent"></div>
+            <h1 id="todayTitle" class="font-display mt-1 text-3xl sm:text-[34px] leading-tight">Checking what needs you…</h1>
+            <p class="mt-2 text-[15px] text-muted">Milo drafts, monitors and optimizes on its own. These are the decisions only you can make.</p>
           </div>
-
-          <div class="card p-4">
-            <div class="mb-3 flex items-center justify-between">
-              <h2 class="font-display text-base font-medium">Recent activity</h2>
-              <a href="#activity" class="text-xs text-accent hover:underline">All</a>
-            </div>
-            <div id="activityList" class="space-y-3 text-sm"></div>
+          <div class="flex items-center justify-between">
+            <h2 class="text-xs font-semibold uppercase tracking-wide text-subtle">Waiting for you</h2>
+            <a href="#approvals" class="text-xs font-medium text-accent hover:underline">All approvals</a>
           </div>
-
-          <div class="card p-4">
-            <h2 class="font-display text-base font-medium mb-3">Quick actions</h2>
-            <div class="flex flex-col gap-2">
-              <button data-prompt="Help me plan a new campaign for my business." class="h-10 rounded-lg border border-line bg-surface px-3 text-sm flex items-center justify-between hover:bg-accent-soft">Plan a campaign <span aria-hidden="true">✦</span></button>
-              <a href="#approvals" class="h-10 rounded-lg border border-line bg-surface px-3 text-sm flex items-center justify-between hover:bg-accent-soft">Review approvals <span id="qaPending" class="text-xs text-muted"></span></a>
-              <button id="refreshBtn" class="h-10 rounded-lg border border-line bg-surface px-3 text-sm flex items-center justify-between hover:bg-accent-soft">Refresh metrics <span aria-hidden="true">↻</span></button>
-              <button data-run-optimizer class="h-10 rounded-lg border border-line bg-surface px-3 text-sm flex items-center justify-between hover:bg-accent-soft">Run optimizer <span aria-hidden="true">⚖</span></button>
-            </div>
-          </div>
-        </aside>
-
-        <section class="order-first flex min-w-0 flex-col gap-4 lg:order-none">
-          <div class="card p-4">
-            <div class="flex items-start justify-between gap-2">
-              <div>
-                <h2 class="font-display text-base font-medium">Daily spend</h2>
-                <p class="text-xs text-muted">Last 7 days across every campaign Milo manages</p>
-              </div>
-              <span id="sourceBadge" class="hidden rounded-full bg-bg px-2 py-0.5 text-[11px] font-medium text-muted">simulated</span>
-            </div>
-            <div id="spendChart" class="mt-3 min-h-[200px]"></div>
-          </div>
+          <div id="pendingList" class="space-y-4"></div>
 
           <div class="card p-4" id="chatCard">
             <div class="mb-3 flex items-center justify-between gap-2">
@@ -151,19 +278,36 @@
               <button data-prompt="Which campaign should I pause, and which should get more budget?" class="rounded-full border border-line bg-bg px-3 py-1.5 text-left text-[11px] text-muted hover:text-ink">What should I change?</button>
             </div>
           </div>
+
+          <div class="card p-4">
+            <div class="flex items-start justify-between gap-2">
+              <div>
+                <h2 class="font-display text-base font-medium">Daily spend</h2>
+                <p class="text-xs text-muted">Last 7 days across every campaign Milo manages</p>
+              </div>
+              <span id="sourceBadge" class="hidden rounded-full bg-bg px-2 py-0.5 text-[11px] font-medium text-muted">simulated</span>
+            </div>
+            <div id="spendChart" class="mt-3 min-h-[200px]"></div>
+          </div>
         </section>
 
-        <aside class="flex flex-col gap-4">
-          <div class="card p-4 space-y-4" id="perfCard">
-            <h2 class="font-display text-base font-medium">Performance overview</h2>
+        <aside class="flex min-w-0 flex-col gap-4">
+          <div class="card card-light p-5 space-y-4" id="perfCard">
+            <h2 class="font-display text-base font-medium">This week</h2>
             <div id="perfStats" class="space-y-4"></div>
           </div>
           <div class="card p-4">
-            <div class="flex items-center justify-between mb-3">
-              <h2 class="font-display text-base font-medium">Waiting for you</h2>
-              <a href="#approvals" class="text-xs text-accent hover:underline">All approvals</a>
+            <h2 class="font-display text-base font-medium mb-3">Quick actions</h2>
+            <div class="flex flex-col gap-2">
+              <button data-prompt="Help me plan a new campaign for my business." class="h-10 rounded-lg border border-line bg-surface px-3 text-sm flex items-center justify-between hover:bg-accent-soft">Plan a campaign <span aria-hidden="true">✦</span></button>
+              <a href="#approvals" class="h-10 rounded-lg border border-line bg-surface px-3 text-sm flex items-center justify-between hover:bg-accent-soft">Review approvals <span id="qaPending" class="text-xs text-muted"></span></a>
+              <button id="refreshBtn" class="h-10 rounded-lg border border-line bg-surface px-3 text-sm flex items-center justify-between hover:bg-accent-soft">Refresh metrics <span aria-hidden="true">↻</span></button>
+              <button data-run-optimizer class="h-10 rounded-lg border border-line bg-surface px-3 text-sm flex items-center justify-between hover:bg-accent-soft">Run optimizer <span aria-hidden="true">⚖</span></button>
             </div>
-            <div id="pendingList" class="space-y-3"></div>
+          </div>
+          <div class="card p-4">
+            <h2 class="font-display text-base font-medium mb-2">Agent insight</h2>
+            <div id="insight" class="text-sm leading-relaxed text-muted"></div>
           </div>
           <div class="card p-4">
             <div class="flex items-center justify-between mb-3">
@@ -173,8 +317,27 @@
             <div id="campaignCards" class="space-y-3"></div>
           </div>
           <div class="card p-4">
-            <h2 class="font-display text-base font-medium mb-2">Agent insight</h2>
-            <div id="insight" class="text-sm leading-relaxed text-muted"></div>
+            <div class="mb-3 flex items-center justify-between">
+              <h2 class="font-display text-base font-medium">Done recently</h2>
+              <a href="#activity" class="text-xs text-accent hover:underline">All</a>
+            </div>
+            <div id="activityList" class="space-y-3 text-sm"></div>
+          </div>
+          <div class="card p-4">
+            <div class="flex items-start justify-between">
+              <h2 class="font-display text-base font-medium">AI agent status</h2>
+              <span id="agentBadge" class="rounded-full bg-bg px-2 py-0.5 text-[11px] font-medium text-muted">…</span>
+            </div>
+            <div class="mt-3 flex items-center gap-3">
+              <div class="grid size-10 place-items-center rounded-lg bg-accent-soft text-accent">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.8 5.5H19l-4.4 3.2 1.7 5.3L12 14.8 7.7 17l1.7-5.3L5 8.5h5.2z"/></svg>
+              </div>
+              <div class="min-w-0">
+                <div class="text-sm font-medium">Milo</div>
+                <p class="text-xs text-muted">Drafts, monitors, asks before acting</p>
+              </div>
+            </div>
+            <div id="agentDetails" class="mt-3 space-y-1 text-xs text-muted"></div>
           </div>
         </aside>
       </div>
@@ -212,6 +375,21 @@
       <div id="approvalList" class="grid max-w-3xl gap-3"></div>
     </section>
 
+    <!-- ============ POSTS (organic Instagram) ============ -->
+    <section id="view-posts" class="view hidden">
+      <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 class="font-display text-2xl tracking-tight">Instagram posts</h1>
+          <p class="text-sm text-muted">Photos, carousels, Reels and Stories for your Instagram account (not ads, no budget). Nothing is posted until you approve it.</p>
+        </div>
+        <button type="button" data-post-new class="h-10 rounded-lg bg-accent px-4 text-sm font-medium text-accent-fg">New post</button>
+      </div>
+      <div class="inbox-grid">
+        <div id="postList" class="card inbox-list p-2"></div>
+        <div id="postEditor" class="card p-4"></div>
+      </div>
+    </section>
+
     <!-- ============ ANALYTICS ============ -->
     <section id="view-analytics" class="view hidden">
       <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
@@ -231,13 +409,15 @@
     <section id="view-inbox" class="view hidden">
       <div class="mb-4">
         <h1 class="font-display text-2xl tracking-tight">Inbox</h1>
-        <p class="text-sm text-muted">Messenger and Instagram DMs to your Page. The bot drafts answers from your FAQ; you send them inside Meta's reply window.</p>
+        <p class="text-sm text-muted">Messenger and Instagram DMs to your Page. The bot drafts answers from your FAQ and business PDFs; you send them inside Meta's reply window.</p>
       </div>
       <div class="inbox-grid">
         <div id="inboxList" class="card inbox-list p-2"></div>
         <div id="inboxThread" class="card p-4"></div>
       </div>
+      <div id="leadsRoot" class="card mt-4 p-4"></div>
       <div id="faqRoot" class="card mt-4 p-4"></div>
+      <div id="docsRoot" class="card mt-4 p-4"></div>
     </section>
 
     <section id="view-activity" class="view hidden">
@@ -256,7 +436,8 @@
       </div>
       <div id="settingsRoot" class="grid gap-4 lg:grid-cols-2"></div>
     </section>
-  </main>
+  </div></main>
+  </div>
 
   <!-- Confirm dialog -->
   <div id="confirm" class="fixed inset-0 z-50 hidden">
@@ -281,10 +462,11 @@
   // =====================================================================
 
   const NAV = [
-    { id: "dashboard", label: "Dashboard" },
+    { id: "dashboard", label: "Today" },
     { id: "campaigns", label: "Campaigns" },
     { id: "approvals", label: "Approvals" },
     { id: "inbox", label: "Inbox" },
+    { id: "posts", label: "Posts" },
     { id: "analytics", label: "Analytics" },
     { id: "activity", label: "Activity" },
     { id: "settings", label: "Settings" },
@@ -407,6 +589,16 @@
     publish_campaign: { label: "Publish campaign", verb: "Publish" },
     pause_campaign: { label: "Pause campaign", verb: "Pause" },
     update_budget: { label: "Change budget", verb: "Change budget" },
+    publish_post: { label: "Instagram post", verb: "Publish" },
+  };
+  const POST_KIND = { photo: "Photo", carousel: "Carousel", reel: "Reel", story: "Story" };
+  const POST_STATUS = {
+    draft: ["Draft", "bg-bg text-muted"],
+    pending_approval: ["Waiting for approval", "bg-warn/10 text-warn"],
+    scheduled: ["Scheduled", "bg-accent-soft text-accent"],
+    publishing: ["Posting…", "bg-accent-soft text-accent"],
+    published: ["Published", "bg-ok/10 text-ok"],
+    failed: ["Failed", "bg-danger/10 text-danger"],
   };
 
   // ---------- tiny markdown (escape first, then format) ----------
@@ -434,25 +626,25 @@
     const lMax = line ? niceMax(Math.max(...rows.map((r) => +r[line] || 0))) : 1;
     const x = (i) => pl + step * (i + 0.5), yP = (v) => pt + ih - ((+v || 0) / pMax) * ih, yL = (v) => pt + ih - ((+v || 0) / lMax) * ih;
     let s = `<svg viewBox="0 0 ${W} ${H}" class="w-full h-auto" role="img" aria-label="Chart">`;
-    s += `<defs><linearGradient id="gArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#35586a" stop-opacity=".22"/><stop offset="100%" stop-color="#35586a" stop-opacity="0"/></linearGradient></defs>`;
+    s += `<defs><linearGradient id="gArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#C2410C" stop-opacity=".22"/><stop offset="100%" stop-color="#C2410C" stop-opacity="0"/></linearGradient></defs>`;
     for (let i = 0; i <= 4; i++) {
       const t = i / 4, y = pt + ih - t * ih;
-      s += `<line x1="${pl}" x2="${W - pr}" y1="${y}" y2="${y}" stroke="#e4dfd4"/>`;
-      s += `<text x="${pl - 8}" y="${y + 4}" text-anchor="end" font-size="11" fill="#8f8a81">₹${num(Math.round(pMax * t))}</text>`;
-      if (line) s += `<text x="${W - pr + 8}" y="${y + 4}" font-size="11" fill="#8f8a81">${num(Math.round(lMax * t))}</text>`;
+      s += `<line x1="${pl}" x2="${W - pr}" y1="${y}" y2="${y}" stroke="#E4E4E7"/>`;
+      s += `<text x="${pl - 8}" y="${y + 4}" text-anchor="end" font-size="11" fill="#71717A">₹${num(Math.round(pMax * t))}</text>`;
+      if (line) s += `<text x="${W - pr + 8}" y="${y + 4}" font-size="11" fill="#71717A">${num(Math.round(lMax * t))}</text>`;
     }
-    if (bar) rows.forEach((r, i) => { const y = yP(r[bar]); const bw = Math.min(34, step * 0.58); s += `<rect x="${x(i) - bw / 2}" y="${y}" width="${bw}" height="${pt + ih - y}" rx="5" fill="#35586a"><title>${shortDay(r.date)}: ${inr2(r[bar])}</title></rect>`; });
+    if (bar) rows.forEach((r, i) => { const y = yP(r[bar]); const bw = Math.min(34, step * 0.58); s += `<rect x="${x(i) - bw / 2}" y="${y}" width="${bw}" height="${pt + ih - y}" rx="5" fill="#C2410C"><title>${shortDay(r.date)}: ${inr2(r[bar])}</title></rect>`; });
     if (area) {
       const pts = rows.map((r, i) => `${x(i)},${yP(r[area])}`).join(" L");
       s += `<path d="M${pts} L${x(n - 1)},${pt + ih} L${x(0)},${pt + ih} Z" fill="url(#gArea)"/>`;
-      s += `<path d="M${pts}" fill="none" stroke="#35586a" stroke-width="2" stroke-linejoin="round"/>`;
-      rows.forEach((r, i) => { s += `<circle cx="${x(i)}" cy="${yP(r[area])}" r="3.5" fill="#35586a"><title>${shortDay(r.date)}: ${inr2(r[area])} · ${num(r.clicks)} clicks</title></circle>`; });
+      s += `<path d="M${pts}" fill="none" stroke="#C2410C" stroke-width="2" stroke-linejoin="round"/>`;
+      rows.forEach((r, i) => { s += `<circle cx="${x(i)}" cy="${yP(r[area])}" r="3.5" fill="#C2410C"><title>${shortDay(r.date)}: ${inr2(r[area])} · ${num(r.clicks)} clicks</title></circle>`; });
     }
     if (line) {
-      s += `<path d="M${rows.map((r, i) => `${x(i)},${yL(r[line])}`).join(" L")}" fill="none" stroke="#8a5a22" stroke-width="2" stroke-dasharray="0" stroke-linejoin="round"/>`;
-      rows.forEach((r, i) => { s += `<circle cx="${x(i)}" cy="${yL(r[line])}" r="3" fill="#8a5a22"><title>${shortDay(r.date)}: ${num(r[line])} clicks</title></circle>`; });
+      s += `<path d="M${rows.map((r, i) => `${x(i)},${yL(r[line])}`).join(" L")}" fill="none" stroke="#2563EB" stroke-width="2" stroke-dasharray="0" stroke-linejoin="round"/>`;
+      rows.forEach((r, i) => { s += `<circle cx="${x(i)}" cy="${yL(r[line])}" r="3" fill="#2563EB"><title>${shortDay(r.date)}: ${num(r[line])} clicks</title></circle>`; });
     }
-    rows.forEach((r, i) => { s += `<text x="${x(i)}" y="${H - 6}" text-anchor="middle" font-size="11" fill="#8f8a81">${shortDay(r.date)}</text>`; });
+    rows.forEach((r, i) => { s += `<text x="${x(i)}" y="${H - 6}" text-anchor="middle" font-size="11" fill="#71717A">${shortDay(r.date)}</text>`; });
     return s + "</svg>";
   }
 
@@ -490,19 +682,22 @@
         ${a.created_at ? `<span>Requested ${ago(a.created_at)}</span>` : ""}
         ${a.decided_at ? `<span>Decided ${ago(a.decided_at)}</span>` : ""}
         ${showCampaign && a.campaign_id ? `<a class="text-accent hover:underline" href="#campaign/${a.campaign_id}">${esc(a.campaign_name || "Campaign #" + a.campaign_id)}</a>` : ""}
+        ${a.post_id ? `<a class="text-accent hover:underline" href="#posts/${a.post_id}">Instagram ${esc(POST_KIND[a.post_kind] || "post")} #${a.post_id}</a>` : ""}
       </div>
       ${pending ? `<div class="mt-3 flex ${compact ? "" : "justify-end"} gap-2">
         <button class="h-9 rounded-lg border border-line px-3 text-sm hover:bg-accent-soft" data-reject="${a.id}">Reject</button>
-        <button class="h-9 rounded-lg bg-accent px-3 text-sm font-medium text-accent-fg" data-approve="${a.id}" data-summary="${esc(a.summary)}" data-verb="${esc(meta.verb)}">Approve</button>
+        <button class="h-9 rounded-lg bg-accent px-3 text-sm font-medium text-accent-fg" data-approve="${a.id}" data-summary="${esc(a.summary)}" data-verb="${esc(meta.verb)}" data-action="${esc(a.action)}">Approve</button>
       </div>` : ""}
     </div>`;
   }
 
   async function decide(id, kind, btn) {
     if (kind === "approve") {
+      const isPost = btn.dataset.action === "publish_post";
       confirmDialog({
-        title: `${btn.dataset.verb} on Meta?`,
-        body: `${btn.dataset.summary}. Milo will make this change on your Meta ad account right away.`,
+        title: isPost ? "Publish to Instagram?" : `${btn.dataset.verb} on Meta?`,
+        body: isPost ? `${btn.dataset.summary} Milo posts it to your Instagram account now, or keeps it until the scheduled time.`
+          : `${btn.dataset.summary}. Milo will make this change on your Meta ad account right away.`,
         ok: `Yes, ${btn.dataset.verb.toLowerCase()}`,
         onOk: async () => {
           await post(`/api/approvals/${id}/approve`);
@@ -549,11 +744,11 @@
     const active = current === "campaign" ? "campaigns" : current;
     const item = (n, cls) => {
       const n2 = n.id === "approvals" ? state.pendingCount : n.id === "inbox" ? state.unreadDms : 0;
-      const count = n2 ? `<span class="ml-1.5 rounded-full bg-warn/15 px-1.5 text-[11px] font-semibold text-warn">${n2}</span>` : "";
-      return `<a href="#${n.id}" class="${cls} ${active === n.id ? "bg-accent-soft text-accent" : "text-muted hover:text-ink"}" ${active === n.id ? 'aria-current="page"' : ""}>${n.label}${count}</a>`;
+      const count = n2 ? `<span class="ml-auto grid h-[22px] min-w-[22px] place-items-center rounded-full bg-brand px-1.5 text-[11px] font-bold text-white">${n2}</span>` : "";
+      return `<a href="#${n.id}" class="${cls} ${active === n.id ? "bg-surface font-semibold text-ink shadow-soft" : "text-muted hover:bg-surface hover:text-ink"}" ${active === n.id ? 'aria-current="page"' : ""}>${n.label}${count}</a>`;
     };
-    $("desktopNav").innerHTML = NAV.map((n) => item(n, "inline-flex items-center rounded-full px-3 py-1.5 text-sm")).join("");
-    $("mobileNav").innerHTML = NAV.map((n) => item(n, "flex items-center rounded-lg px-3 py-3 text-sm")).join("");
+    $("desktopNav").innerHTML = NAV.map((n) => item(n, "flex h-11 items-center gap-2 rounded-xl px-3 text-sm")).join("");
+    $("mobileNav").innerHTML = NAV.map((n) => item(n, "flex h-11 items-center gap-2 rounded-xl px-3 text-sm")).join("");
   }
 
   // =====================================================================
@@ -594,6 +789,7 @@
       $("spendChart").innerHTML = summary.daily.length ? chart(summary.daily, { area: "spend" })
         : `<div class="grid min-h-[200px] place-items-center text-center text-sm text-muted">No spend yet. Metrics appear once a campaign is live.</div>`;
 
+      setToday(pending.length);
       $("pendingList").innerHTML = pending.length ? pending.slice(0, 3).map((a) => approvalCard(a, { compact: true })).join("")
         : `<p class="text-sm text-muted">You're all caught up. When Milo wants to publish, pause or change a budget, it waits here.</p>`;
 
@@ -796,9 +992,16 @@
     return null;
   }
 
+  function setToday(n) {
+    const d = $("todayDate"); if (d) d.textContent = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" });
+    const t = $("todayTitle"); if (!t) return;
+    t.textContent = n ? `${n} thing${n > 1 ? "s" : ""} need${n > 1 ? "" : "s"} you today` : "You're all caught up";
+  }
+
   async function refreshDashboardSide() {
     try {
       const [pending, campaigns] = await Promise.all([api("/api/approvals?status=pending"), api("/api/campaigns")]);
+      setToday(pending.length);
       $("pendingList").innerHTML = pending.length ? pending.slice(0, 3).map((a) => approvalCard(a, { compact: true })).join("") : `<p class="text-sm text-muted">You're all caught up.</p>`;
       $("campaignCards").innerHTML = campaigns.length ? campaigns.slice(0, 4).map(campaignMini).join("") : `<p class="text-sm text-muted">No campaigns yet. Ask Milo to plan one.</p>`;
     } catch { /* offline */ }
@@ -1096,6 +1299,9 @@
     dm_replied: ["DM reply sent", "text-ink"],
     dm_agent_suggested: ["DM bot drafted / sent an answer", "text-ink"],
     dm_handed_off: ["DM handed to a person (not in the FAQ)", "text-warn"],
+    dm_handed_back: ["Conversation handed back to the DM bot", "text-ink"],
+    knowledge_doc_added: ["PDF added for the DM bot", "text-ink"],
+    knowledge_doc_changed: ["PDF for the DM bot changed", "text-ink"],
     lead_captured: ["Lead captured from a DM", "text-ok"],
     faq_changed: ["Bot FAQ changed", "text-ink"],
     optimizer_run: ["Optimizer checked campaigns", "text-accent"],
@@ -1141,7 +1347,13 @@
   // =====================================================================
   const PLATFORM_DM = { messenger: "Messenger", instagram: "Instagram" };
   const threadKey = (c) => [c.platform, c.page_id, c.customer_id].map(encodeURIComponent).join("~");
-  const who = (id) => `Customer …${esc(String(id).slice(-4))}`;
+  // The sender's real name (Meta profile lookup) and full id; "Unknown sender" when Meta shares no name.
+  function senderName(s) {
+    if (!s) return "Unknown sender";
+    if (s.name && s.username) return `${s.name} (@${s.username})`;
+    return s.name || (s.username ? `@${s.username}` : "Unknown sender");
+  }
+  const senderId = (s, id) => `ID ${esc((s && s.id) || id)}`;
   function windowBadge(w) {
     if (!w) return "";
     if (w.state === "open") {
@@ -1151,7 +1363,7 @@
     if (w.state === "human_agent") return `<span class="rounded-full bg-warn/10 px-2 py-0.5 text-[11px] font-medium text-warn" title="Only a person may reply, with the HUMAN_AGENT tag">24h window closed · human reply only</span>`;
     return `<span class="rounded-full bg-bg px-2 py-0.5 text-[11px] font-medium text-muted">Window closed · wait for a new message</span>`;
   }
-  const AGENT_ACTION = { answer: "answered from FAQ", lead: "lead saved", handoff: "handed to a person", skipped: "stayed out", processing: "working on it", failed: "failed, needs a person" };
+  const AGENT_ACTION = { answer: "answered", lead: "lead saved", handoff: "handed to a person", skipped: "stayed out", processing: "working on it", failed: "failed, needs a person (bot still answers new messages)" };
   function draftBox(t, canReply) {
     const lastIn = [...t.messages].reverse().find((m) => !m.is_echo);
     const lastIdx = t.messages.lastIndexOf(lastIn);
@@ -1163,6 +1375,12 @@
       <div class="flex items-center justify-between gap-2 text-xs text-muted"><span>Bot draft · ${esc(AGENT_ACTION[lastIn.agent_action] || lastIn.agent_action)}${lastIn.agent_note ? " · " + esc(lastIn.agent_note) : ""}</span>
         <span class="flex gap-2">${canReply ? `<button type="button" data-use-draft class="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-accent-fg">Use draft</button>` : ""}${ask}</span></div>
       <p id="draftText" class="mt-1 text-sm whitespace-pre-wrap">${esc(lastIn.suggested_reply)}</p></div>`;
+  }
+  function botHoldBox(t) {
+    if (!t.bot || t.bot.active || state.status?.dm?.agent_enabled === false) return "";
+    return `<div class="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-warn/10 px-3 py-2 text-xs text-warn">
+      <span>Bot is staying out: ${esc(t.bot.hold)}.</span>
+      <button type="button" data-handback="${esc(threadKey(t))}" class="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-ink hover:bg-accent-soft">Hand back to bot</button></div>`;
   }
   async function renderFaq() {
     const root = $("faqRoot");
@@ -1191,8 +1409,122 @@
       root.innerHTML = errorBox(e.message, "inbox");
     }
   }
+  // LEADS: phone numbers people shared in DMs (saved by the DM bot), newest first, with a link to the chat.
+  const LEADS_SHOWN = 20;
+  async function renderLeads(showAll) {
+    const root = $("leadsRoot");
+    if (!root) return;
+    try {
+      const rows = await api("/api/leads");
+      const shown = showAll ? rows : rows.slice(0, LEADS_SHOWN);
+      root.innerHTML = `
+        <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div><h2 class="font-display text-base font-medium">Leads <span class="text-sm text-muted">(${rows.length})</span></h2>
+          <p class="text-xs text-muted">Phone numbers people shared in DMs. Call them back, then open the chat to see the conversation.</p></div>
+          ${rows.length ? '<button type="button" data-leads-csv class="rounded-lg border border-line px-3 py-1.5 text-xs hover:bg-accent-soft">Download CSV</button>' : ""}
+        </div>
+        <div class="divide-y divide-line">${shown.length ? shown.map((l) => {
+          const name = l.name || senderName(l.sender);
+          const key = [l.platform, l.page_id, l.customer_id].map(encodeURIComponent).join("~");
+          return `
+          <div class="flex flex-wrap items-start justify-between gap-2 py-2">
+            <div class="min-w-0">
+              <div class="text-sm font-medium">${esc(name)} · <span class="select-all">${l.phone ? esc(l.phone) : '<span class="font-normal text-muted">asked for a callback, no number yet</span>'}</span></div>
+              <div class="break-all text-[11px] text-muted">${PLATFORM_DM[l.platform] || esc(l.platform)} · ${senderId(l.sender, l.customer_id)} · ${ago(l.created_at)}</div>
+              ${l.note ? `<div class="mt-0.5 text-sm text-muted">"${esc(l.note)}"</div>` : ""}
+            </div>
+            <a href="#inbox/${key}" class="shrink-0 rounded-lg border border-line px-2 py-1 text-xs hover:bg-accent-soft">Open chat</a>
+          </div>`; }).join("") : '<p class="py-3 text-sm text-muted">No leads yet. When someone shares a phone number in a DM, the bot saves it here.</p>'}</div>
+        ${rows.length > shown.length ? `<button type="button" data-leads-all class="mt-2 text-xs text-accent hover:underline">Show all ${rows.length}</button>` : ""}`;
+    } catch (e) {
+      root.innerHTML = errorBox(e.message, "inbox");
+    }
+  }
+  document.body.addEventListener("click", async (e) => {
+    const t = e.target.closest("[data-leads-csv],[data-leads-all]");
+    if (!t) return;
+    if (t.matches("[data-leads-all]")) return renderLeads(true);
+    t.disabled = true;
+    try {  // fetch with the same headers as every API call (API token, if set), then save the file
+      const res = await fetch("/api/leads.csv", { headers: authHeaders() });
+      if (!res.ok) throw new Error(`Download failed (${res.status})`);
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = (res.headers.get("content-disposition") || "").match(/filename="([^"]+)"/)?.[1] || "milo-leads.csv";
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) { toast(err.message, "error"); }
+    t.disabled = false;
+  });
+  const kb = (n) => n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+  async function renderDocs(openId) {
+    const root = $("docsRoot");
+    if (!root) return;
+    try {
+      const docs = await api("/api/knowledge");
+      const open = openId ? await api(`/api/knowledge/${openId}`) : null;
+      root.innerHTML = `
+        <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div><h2 class="font-display text-base font-medium">Business documents (PDF)</h2>
+          <p class="text-xs text-muted">Upload a price list, brochure or policy. The bot can draft answers from it; answers that use a PDF are always drafts for you to check and send. PDF only, up to 10 MB and 100 pages, with real text (not scanned).</p></div>
+          <label class="inline-flex cursor-pointer items-center rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-accent-fg">
+            <input id="docFile" type="file" accept="application/pdf,.pdf" class="sr-only">Upload PDF</label>
+        </div>
+        <div id="docStatus" class="text-xs text-muted" aria-live="polite"></div>
+        <div class="divide-y divide-line">${docs.length ? docs.map((d) => `
+          <div class="py-2">
+            <div class="flex flex-wrap items-start justify-between gap-2">
+              <div class="min-w-0"><div class="truncate text-sm font-medium" title="${esc(d.filename)}">${esc(d.filename)}${d.enabled ? "" : ' <span class="rounded-full bg-bg px-1.5 text-[11px] text-muted">off</span>'}</div>
+              <div class="text-xs text-muted">${d.page_count} page(s) · ${kb(d.size)} · ${d.chars.toLocaleString()} characters · ${ago(d.created_at)}</div></div>
+              <div class="flex shrink-0 gap-2">
+                <button type="button" data-doc-read="${open && open.id === d.id ? "" : d.id}" class="rounded-lg border border-line px-2 py-1 text-xs hover:bg-accent-soft">${open && open.id === d.id ? "Hide" : "Read"}</button>
+                <button type="button" data-doc-toggle="${d.id}" data-on="${d.enabled ? 0 : 1}" class="rounded-lg border border-line px-2 py-1 text-xs hover:bg-accent-soft">${d.enabled ? "Turn off" : "Turn on"}</button>
+                <button type="button" data-doc-del="${d.id}" class="rounded-lg border border-line px-2 py-1 text-xs hover:bg-accent-soft" aria-label="Delete ${esc(d.filename)}">Delete</button>
+              </div>
+            </div>
+            ${open && open.id === d.id ? `<div class="mt-2 max-h-[420px] overflow-y-auto rounded-lg bg-bg p-3">${open.pages.map((t, i) => `
+              <div class="mb-3"><div class="text-[11px] font-medium uppercase tracking-wide text-muted">Page ${i + 1}</div>
+              <p class="mt-1 whitespace-pre-wrap text-sm">${t ? esc(t) : '<span class="text-muted">(no text on this page)</span>'}</p></div>`).join("")}</div>` : ""}
+          </div>`).join("") : '<p class="py-3 text-sm text-muted">No documents yet. Upload a PDF and the bot can use it, next to the FAQ.</p>'}</div>`;
+    } catch (e) {
+      root.innerHTML = errorBox(e.message, "inbox");
+    }
+  }
+  document.body.addEventListener("change", async (e) => {
+    if (e.target.id !== "docFile") return;
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const status = $("docStatus");
+    if (!/\.pdf$/i.test(file.name) && file.type !== "application/pdf") { toast("Choose a PDF file", "error"); return; }
+    if (file.size > 10 * 1048576) { toast("PDF is larger than 10 MB", "error"); return; }
+    const fd = new FormData();
+    fd.append("file", file);
+    status.textContent = `Reading ${file.name}…`;
+    try {
+      const d = await api("/api/knowledge", { method: "POST", body: fd });
+      toast(`Added ${d.filename} (${d.page_count} page(s))`);
+      renderDocs(d.id);
+    } catch (err) { status.textContent = ""; toast(err.message, "error"); e.target.value = ""; }
+  });
+  document.body.addEventListener("click", async (e) => {
+    const t = e.target.closest("[data-doc-read],[data-doc-toggle],[data-doc-del]");
+    if (!t) return;
+    try {
+      if (t.matches("[data-doc-read]")) return renderDocs(t.dataset.docRead || null);
+      t.disabled = true;
+      if (t.matches("[data-doc-toggle]")) {
+        await api(`/api/knowledge/${t.dataset.docToggle}`, { method: "PATCH", body: JSON.stringify({ enabled: t.dataset.on === "1" }) });
+        toast(t.dataset.on === "1" ? "The bot can use this PDF again" : "The bot won't use this PDF");
+      }
+      if (t.matches("[data-doc-del]")) { await api(`/api/knowledge/${t.dataset.docDel}`, { method: "DELETE" }); toast("PDF deleted"); }
+      renderDocs();
+    } catch (err) { toast(err.message, "error"); t.disabled = false; }
+  });
   async function renderInbox(arg) {
+    renderLeads();
     renderFaq();
+    renderDocs();
     const list = $("inboxList"), pane = $("inboxThread");
     list.innerHTML = `<div class="space-y-3 p-3">${skeleton()}${skeleton()}</div>`;
     let rows = [];
@@ -1213,8 +1545,9 @@
     const current = arg || threadKey(rows[0]);
     list.innerHTML = `<div class="divide-y divide-line">${rows.map((c) => `
       <a href="#inbox/${threadKey(c)}" class="block rounded-lg px-3 py-3 ${threadKey(c) === current ? "bg-accent-soft" : "hover:bg-accent-soft"}">
-        <div class="flex items-center justify-between gap-2"><span class="text-sm font-medium">${who(c.customer_id)}</span>
+        <div class="flex items-center justify-between gap-2"><span class="min-w-0 truncate text-sm font-medium" title="${esc(senderName(c.sender))}">${esc(senderName(c.sender))}</span>
           ${c.unread ? `<span class="rounded-full bg-warn/15 px-1.5 text-[11px] font-semibold text-warn">${c.unread}</span>` : `<span class="text-xs text-muted">${ago(c.last_at)}</span>`}</div>
+        <div class="break-all text-[11px] text-muted">${senderId(c.sender, c.customer_id)}</div>
         <div class="text-xs text-muted">${PLATFORM_DM[c.platform] || esc(c.platform)}${c.last_from === "page" ? " · replied" : ""}${c.needs_person ? ' · <span class="font-medium text-warn">needs a person</span>' : ""}</div>
         <div class="truncate text-sm text-muted">${esc(c.last_text || "(no text)")}</div>
       </a>`).join("")}</div>`;
@@ -1225,26 +1558,40 @@
       const canReply = t.window.state === "open" || (t.window.state === "human_agent" && state.status?.dm?.human_agent_enabled);
       pane.innerHTML = `
         <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div><div class="font-medium">${who(t.customer_id)}</div><div class="text-xs text-muted">${PLATFORM_DM[t.platform] || esc(t.platform)} · ${t.messages.length} message(s)</div></div>
+          <div class="min-w-0"><div class="font-medium">${esc(senderName(t.sender))}</div>
+            <div class="break-all text-xs text-muted"><span class="select-all">${senderId(t.sender, t.customer_id)}</span> · ${PLATFORM_DM[t.platform] || esc(t.platform)} · ${t.messages.length} message(s)</div>
+            ${t.sender && !t.sender.name && !t.sender.username && t.sender.lookup_error ? `<div class="text-[11px] text-muted" title="${esc(t.sender.lookup_error)}">Meta didn't share a name for this person.</div>` : ""}</div>
           ${windowBadge(t.window)}
         </div>
         <div id="inboxMsgs" class="inbox-thread">${t.messages.map((m) => `
-          <div class="bubble ${m.is_echo ? "bubble-out" : "bubble-in"}">${esc(m.text || (m.kind === "postback" ? "(button tap)" : "(attachment or sticker)"))}</div>
-          <div class="bubble-meta ${m.is_echo ? "out" : "in"}">${m.is_echo ? (m.sent_by === "agent" ? "Milo bot" : "You") + (m.status === "dry_run" ? " · dry run, not sent" : "") : (m.kind === "postback" ? "Button" : "Customer")} · ${ago(m.sent_at || m.received_at)}${!m.is_echo && m.agent_action ? ` · bot: ${esc(AGENT_ACTION[m.agent_action] || m.agent_action)}${m.agent_note ? " (" + esc(m.agent_note) + ")" : ""}` : ""}</div>`).join("")}</div>
+          <div class="bubble ${m.is_echo ? "bubble-out" : "bubble-in"}">${storyLine(m)}${esc(m.text || (m.story && m.story.kind ? "" : m.kind === "postback" ? "(button tap)" : "(attachment or sticker)"))}</div>
+          <div class="bubble-meta ${m.is_echo ? "out" : "in"}">${m.is_echo ? (m.sent_by === "agent" ? "Milo bot" : "You") + (m.status === "dry_run" ? " · dry run, not sent" : "") : (m.kind === "postback" ? `${esc(senderName(t.sender))} · button` : esc(senderName(t.sender)))} · ${ago(m.sent_at || m.received_at)}${!m.is_echo && m.agent_action ? ` · bot: ${esc(AGENT_ACTION[m.agent_action] || m.agent_action)}${m.agent_note ? " (" + esc(m.agent_note) + ")" : ""}` : ""}</div>`).join("")}</div>
+        ${botHoldBox(t)}
         ${draftBox(t, canReply)}
         <form id="inboxReply" class="mt-3 flex items-end gap-2" data-key="${esc(current)}">
-          <textarea id="inboxText" rows="2" maxlength="2000" class="flex-1 resize-none rounded-lg border border-line bg-surface px-3 py-2 text-sm" placeholder="${canReply ? "Write a reply…" : "Reply window closed"}" ${canReply ? "" : "disabled"}></textarea>
+          <textarea id="inboxText" rows="2" maxlength="${t.platform === "instagram" ? 999 : 2000}" class="flex-1 resize-none rounded-lg border border-line bg-surface px-3 py-2 text-sm" placeholder="${canReply ? "Write a reply…" : "Reply window closed"}" ${canReply ? "" : "disabled"}></textarea>
           <button type="submit" class="h-10 rounded-lg bg-accent px-4 text-sm font-medium text-accent-fg" ${canReply ? "" : "disabled"}>Send</button>
         </form>
         <p class="mt-2 text-xs text-muted">${state.status?.meta_dry_run ? "Dry run: replies are saved here but not sent to Meta." : "Replies are sent as your Page through Meta's Send API."}</p>`;
       const box = $("inboxMsgs");
       box.scrollTop = box.scrollHeight;
+      // The bot is still working on the latest message: look again in a few seconds (stops when it's done,
+      // when you leave the Inbox or switch thread, and never while you are typing a reply).
+      clearTimeout(state.inboxPoll);
+      const lastIn = [...t.messages].reverse().find((m) => !m.is_echo);
+      if (lastIn && lastIn.agent_action === "processing") {
+        state.inboxPoll = setTimeout(() => {
+          const here = (location.hash.slice(1) || "").split("/")[0] === "inbox";
+          const sameThread = $("inboxReply") && $("inboxReply").dataset.key === current;
+          if (here && sameThread && !$("inboxText").value.trim()) renderInbox(current);
+        }, 4000);
+      }
     } catch (e) {
       pane.innerHTML = errorBox(e.message, "inbox");
     }
   }
   document.body.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-use-draft],[data-suggest],[data-faq-sample],[data-faq-del]");
+    const t = e.target.closest("[data-use-draft],[data-suggest],[data-handback],[data-faq-sample],[data-faq-del]");
     if (!t) return;
     try {
       if (t.matches("[data-use-draft]")) { $("inboxText").value = $("draftText").textContent; $("inboxText").focus(); return; }
@@ -1253,6 +1600,12 @@
         const [platform, page, customer] = t.dataset.suggest.split("~").map(decodeURIComponent);
         await api(`/api/inbox/${encodeURIComponent(platform)}/${encodeURIComponent(page)}/${encodeURIComponent(customer)}/suggest`, { method: "POST" });
         return renderInbox(t.dataset.suggest);
+      }
+      if (t.matches("[data-handback]")) {
+        const [platform, page, customer] = t.dataset.handback.split("~").map(decodeURIComponent);
+        const hb = await api(`/api/inbox/${encodeURIComponent(platform)}/${encodeURIComponent(page)}/${encodeURIComponent(customer)}/handback`, { method: "POST" });
+        toast(hb.answering_latest ? "Handed back: the bot is answering the latest message now" : "The bot will answer FAQ questions in this conversation again");
+        return renderInbox(t.dataset.handback);
       }
       if (t.matches("[data-faq-sample]")) { const r = await api("/api/faq/sample", { method: "POST" }); toast(r.added ? `Added ${r.added} sample entries` : "Sample FAQ already loaded"); }
       if (t.matches("[data-faq-del]")) { await api(`/api/faq/${t.dataset.faqDel}`, { method: "DELETE" }); toast("FAQ entry deleted"); }
@@ -1288,6 +1641,23 @@
   // =====================================================================
   // SETTINGS
   // =====================================================================
+  document.body.addEventListener("click", async (e) => {
+    const t = e.target.closest("[data-ig-check]");
+    if (!t) return;
+    const out = $("igCheck");
+    t.disabled = true;
+    out.innerHTML = `<p class="mt-2 text-xs text-muted">Asking Meta…</p>`;
+    try {
+      const r = await api("/api/instagram/check");
+      const mark = (ok) => ok === true ? '<span class="text-ok">✓</span>' : ok === false ? '<span class="text-warn">✗</span>' : '<span class="text-muted">?</span>';
+      out.innerHTML = `<div class="mt-2 rounded-lg bg-bg p-3 text-xs">
+        ${r.note ? `<p class="mb-2 text-muted">${esc(r.note)}</p>` : ""}
+        <ul class="space-y-1.5">${r.checks.map((c) => `<li class="flex gap-2"><span class="w-3 shrink-0">${mark(c.ok)}</span><span><span class="font-medium text-ink">${esc(c.label)}:</span> ${esc(c.detail)}</span></li>`).join("")}</ul>
+        <p class="mt-3 font-medium text-ink">Also check by hand (Meta doesn't show these through the API):</p>
+        <ul class="mt-1 space-y-1 text-muted">${r.manual.map((m) => `<li>&bull; ${esc(m)}</li>`).join("")}</ul></div>`;
+    } catch (err) { out.innerHTML = `<p class="mt-2 text-xs text-danger">${esc(err.message)}</p>`; }
+    t.disabled = false;
+  });
   async function renderSettings() {
     const root = $("settingsRoot");
     root.innerHTML = `<div class="card p-4">${skeleton("h-32")}</div>`;
@@ -1309,6 +1679,9 @@
             ${s.dm ? check(s.dm.webhook_configured, "DM webhook (Inbox)", s.dm.webhook_configured ? `Receiving Messenger / Instagram DMs at /webhooks/meta. ${s.dm.unread} unread. Replies use ${s.dm.page_token_set ? "META_PAGE_ACCESS_TOKEN" : "a Page token fetched with META_ACCESS_TOKEN"}${s.dm.human_agent_enabled ? "; HUMAN_AGENT replies on" : ""}.` : "Add META_APP_SECRET and META_WEBHOOK_VERIFY_TOKEN to .env and connect the webhook in the Meta app (README: DM webhook).") : ""}
             ${check(s.database_ok, "Database (MongoDB)", s.database_ok ? "Connected. Campaigns, approvals, metrics and activity are stored there." : `Not reachable: ${esc(s.database_error)}. Check MONGODB_URI in .env and that your IP is allowed in Atlas (Network Access).`)}
             ${s.research ? check(s.research.enabled && s.research.key_set, "Web research (Tavily)", !s.research.enabled ? "Turned off (RESEARCH_ENABLED=false). Milo writes copy without research." : s.research.key_set ? `Recent context from the past ${esc(s.research.time_range)}, up to ${s.research.max_results} sources per search.` : "Add TAVILY_API_KEY to .env (free: 1,000 credits/month). Without it Milo writes copy unresearched.") : ""}
+            <li class="py-2.5"><div class="flex flex-wrap items-center justify-between gap-2"><div><div class="text-sm font-medium">Instagram DMs</div><div class="text-xs text-muted">Checks what Instagram DMs need on Meta's side. Read-only: changes nothing.</div></div>
+              <button type="button" data-ig-check class="rounded-lg border border-line px-3 py-1.5 text-xs hover:bg-accent-soft">Check Instagram DM setup</button></div>
+              <div id="igCheck" aria-live="polite"></div></li>
             ${check(s.metrics_provider === "meta", "Metrics source", s.metrics_provider === "meta" ? `Real Meta Insights every ${s.metrics_poll_minutes} min (paused ads have no new results).` : `Simulated demo data (dry run), refreshed every ${s.metrics_poll_minutes} min.`)}
           </ul>
         </div>
@@ -1346,19 +1719,204 @@
     }
   }
 
+
+  // =====================================================================
+  // POSTS (organic Instagram: photo, carousel, Reel, Story)
+  // =====================================================================
+  const POST_MAX = { photo: 1, carousel: 10, reel: 10, story: 1 };
+  const pad2 = (n) => String(n).padStart(2, "0");
+  function toLocalInput(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  }
+  function fromLocalInput(v) {  // "2026-11-05T18:30" (this computer's time) -> ISO with offset
+    if (!v) return null;
+    const d = new Date(v), off = -d.getTimezoneOffset(), sign = off >= 0 ? "+" : "-";
+    return `${v}:00${sign}${pad2(Math.floor(Math.abs(off) / 60))}:${pad2(Math.abs(off) % 60)}`;
+  }
+  const whenLabel = (iso) => new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+  function captionStats(text) {
+    const tags = (text.match(/#\w+/g) || []).length, mentions = (text.match(/@[\w.]+/g) || []).length;
+    const bad = text.length > 2200 || tags > 30 || mentions > 20;
+    return `<span class="${bad ? "text-danger" : ""}">${text.length}/2200 characters · ${tags}/30 hashtags · ${mentions}/20 mentions</span>`;
+  }
+  const frameUrl = (p, i) => `/api/posts/${p.id}/preview/${i}?t=${Date.now()}`;
+  function postPreview(p, imgs) {
+    const first = imgs[0];
+    if (p.kind === "story" || p.kind === "reel") {
+      const media = p.kind === "reel" && p.has_video ? `<video src="/api/posts/${p.id}/video" controls muted playsinline loop></video>`
+        : first ? `<img id="igSlide" src="${frameUrl(p, 0)}" alt="Preview of the ${p.kind}">` : "";
+      return `<div class="ig-phone"><div class="ig-tall">${media}
+        ${p.kind === "story" ? '<div style="position:absolute;top:10px;left:10px;right:10px;height:3px;border-radius:2px;background:rgba(255,255,255,.85)"></div>' : ""}
+        <div style="position:absolute;left:12px;bottom:${p.kind === "reel" && p.has_video ? 64 : 12}px;right:12px;color:#fff;font-size:12px;text-shadow:0 1px 3px rgba(0,0,0,.6);pointer-events:none">
+          ${p.kind === "reel" ? "<b>your_account</b>" : ""}${p.kind === "reel" && p.caption && p.has_video ? `<div style="margin-top:4px;max-height:3.6em;overflow:hidden">${esc(p.caption)}</div>` : ""}</div>
+        ${!first ? '<div style="position:absolute;inset:0;display:grid;place-items:center;color:#bbb;font-size:13px">Add an image</div>' : ""}
+      </div></div><p class="mt-2 text-center text-xs text-muted">${p.kind === "reel" ? (p.has_video ? "The video Instagram will get (9:16)." : `9:16 preview · the video (3 s per image) is made when you request publishing.`) : "Story preview (9:16) · disappears after 24 hours."}</p>`;
+    }
+    return `<div class="ig-phone"><div class="flex items-center gap-2 px-3 py-2"><span class="size-7 rounded-full bg-gradient-to-br from-[#f3e3c7] to-[#e7eef1]"></span><b class="text-[13px]">your_account</b></div>
+      <div class="ig-feed">${first ? `<img src="${first}" alt="">` : '<div class="aspect-square grid place-items-center bg-bg text-sm text-muted">Add an image</div>'}</div>
+      ${p.kind === "carousel" && imgs.length > 1 ? `<div class="flex justify-center gap-1 py-2">${imgs.map((_, i) => `<span class="size-1.5 rounded-full ${i ? "bg-ink/20" : "bg-accent"}"></span>`).join("")}</div>` : ""}
+      <p class="px-3 pb-3 pt-1 text-[13px] leading-snug"><b>your_account</b> ${esc(p.caption || "")}</p></div>
+      <p class="mt-2 text-center text-xs text-muted">${p.kind === "carousel" ? `Carousel · ${imgs.length} image(s), swipe on Instagram` : "Feed preview"}</p>`;
+  }
+  let slideTimer = null;
+  // Instagram story replies / mentions arrive as DMs (Inbox)
+  function storyLine(m) {
+    const st = m.story || {};
+    if (!st.kind) return "";
+    const label = st.kind === "mention" ? "📣 Mentioned you in their story" : "↩ Replied to your story";
+    const link = /^https:\/\//.test(st.url || "") ? ` · <a href="${esc(st.url)}" target="_blank" rel="noopener" class="underline">view</a>` : "";
+    return `<span class="block text-[11px] text-muted">${label}${link}</span>`;
+  }
+  async function renderPosts(arg) {
+    clearInterval(slideTimer);
+    const list = $("postList"), pane = $("postEditor");
+    list.innerHTML = `<div class="space-y-3 p-3">${skeleton()}${skeleton()}</div>`;
+    let rows = [];
+    try { rows = await api("/api/posts"); } catch (e) { list.innerHTML = `<div class="p-2">${errorBox(e.message, "posts")}</div>`; pane.innerHTML = ""; return; }
+    const current = Number(arg) || (rows[0] && rows[0].id);
+    list.innerHTML = rows.length ? `<div class="divide-y divide-line">${rows.map((p) => `
+      <a href="#posts/${p.id}" class="flex gap-3 rounded-lg px-3 py-3 ${p.id === current ? "bg-accent-soft" : "hover:bg-accent-soft"}">
+        <span class="size-10 shrink-0 overflow-hidden rounded-lg bg-bg">${p.image_count ? `<img src="/api/posts/${p.id}/images/0" alt="" class="h-full w-full object-cover">` : ""}</span>
+        <span class="min-w-0"><span class="flex flex-wrap items-center gap-1.5"><span class="text-sm font-medium">${POST_KIND[p.kind]}</span>${badge(POST_STATUS, p.status)}</span>
+          <span class="block truncate text-xs text-muted">${esc(p.caption || (p.kind === "story" ? "Story" : "No caption yet"))}</span>
+          <span class="block text-[11px] text-muted">${p.published_at ? "Posted " + ago(p.published_at) : p.scheduled_at ? "For " + whenLabel(p.scheduled_at) : "Created " + ago(p.created_at)}${p.meta_mode === "dry_run" ? " · dry run" : ""}</span></span>
+      </a>`).join("")}</div>`
+      : `<p class="p-6 text-center text-sm text-muted">No posts yet. Click <b>New post</b>, or ask Milo in chat: "Make a Reel about our ceramic coating".</p>`;
+    const p = rows.find((r) => r.id === current);
+    if (!p) { pane.innerHTML = emptyBox("Create your first Instagram post", "Pick a photo, carousel, Reel or Story, add images (upload or AI), write a caption, and request approval.", '<button type="button" data-post-new class="mt-4 h-9 rounded-lg bg-accent px-4 text-sm font-medium text-accent-fg">New post</button>'); return; }
+    const imgs = Array.from({ length: p.image_count }, (_, i) => `/api/posts/${p.id}/images/${i}?v=${encodeURIComponent(p.created_at)}-${p.image_count}`);
+    const editable = p.status === "draft" || p.status === "failed";
+    let approval = "";
+    if (p.approval_id && p.status === "pending_approval") {
+      try { const a = (await api("/api/approvals?status=pending")).find((x) => x.id === p.approval_id); if (a) approval = approvalCard(a, { showCampaign: false }); } catch { /* shown on Approvals */ }
+    }
+    const canAdd = editable && p.image_count < POST_MAX[p.kind];
+    pane.innerHTML = `
+      <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div class="min-w-0">
+          <div class="mb-3 flex flex-wrap items-center gap-2"><span class="font-display text-lg">${POST_KIND[p.kind]} #${p.id}</span>${badge(POST_STATUS, p.status)}${p.meta_mode === "dry_run" ? '<span class="rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">dry run: not on Instagram</span>' : ""}</div>
+          ${p.status === "published" ? `<div class="mb-3 rounded-lg bg-ok/10 p-3 text-sm text-ok">Posted ${ago(p.published_at)}. ${p.permalink ? `<a class="font-medium underline" href="${esc(p.permalink)}" target="_blank" rel="noopener">View on Instagram</a>` : p.meta_mode === "dry_run" ? "Dry run: nothing was sent to Instagram." : ""}</div>` : ""}
+          ${p.status === "failed" && p.error ? `<div class="mb-3 rounded-lg bg-danger/5 p-3 text-sm text-danger"><b>Not posted:</b> ${esc(p.error)}<br><span class="text-muted">Fix it if needed, then request publishing again.</span></div>` : ""}
+          ${p.status === "scheduled" ? `<div class="mb-3 rounded-lg bg-accent-soft p-3 text-sm text-accent">Approved. Milo posts it on ${whenLabel(p.scheduled_at)} (Milo must be running then).</div>` : ""}
+          ${approval ? `<div class="mb-3">${approval}</div>` : ""}
+          <fieldset ${editable ? "" : "disabled"} class="space-y-4">
+            <div><div class="mb-1 text-xs font-medium text-muted">Type</div>
+              <div class="seg inline-flex flex-wrap gap-1 rounded-full border border-line bg-surface p-1">${Object.entries(POST_KIND).map(([k, l]) => `<button type="button" data-post-kind="${k}" aria-pressed="${p.kind === k}" class="rounded-full px-3 py-1 text-sm">${l}</button>`).join("")}</div></div>
+            ${p.kind === "story" ? '<p class="text-xs text-muted">Stories have no caption on Instagram. The image is shown full-screen (9:16) for 24 hours.</p>' : `
+            <div><label class="mb-1 block text-xs font-medium text-muted" for="postCaption">Caption</label>
+              <textarea id="postCaption" rows="5" maxlength="2200" class="w-full resize-none rounded-lg border border-line bg-surface px-3 py-2 text-sm" placeholder="Write the caption. A few relevant hashtags at the end, e.g. #cardetailing #delhi">${esc(p.caption || "")}</textarea>
+              <div id="postCount" class="mt-1 text-[11px] text-muted">${captionStats(p.caption || "")}</div></div>`}
+            ${p.kind === "story" || p.kind === "reel" ? `
+            <div class="rounded-lg border border-line p-3"><div class="mb-2 text-xs font-medium text-muted">Text on image <span class="font-normal">(optional · drawn onto the ${p.kind === "reel" ? "video" : "Story"}, since Instagram's API can't add text or stickers)</span></div>
+              <div class="grid gap-2">
+                <input id="ovHeadline" data-ov maxlength="60" value="${esc((p.overlay || {}).headline || "")}" class="h-9 rounded-lg border border-line bg-surface px-3 text-sm font-semibold" placeholder="Headline, e.g. Car wash at your doorstep">
+                <input id="ovDetails" data-ov maxlength="90" value="${esc((p.overlay || {}).details || "")}" class="h-9 rounded-lg border border-line bg-surface px-3 text-sm" placeholder="Details, e.g. Foam wash from ₹399 · Delhi NCR">
+                <input id="ovCta" data-ov maxlength="30" value="${esc((p.overlay || {}).cta || "")}" class="h-9 rounded-lg border border-line bg-surface px-3 text-sm" placeholder="Button text, e.g. DM us to book">
+              </div><p class="mt-1 text-[11px] text-muted">The preview updates as you type. Emoji are left out (the font can't draw them).</p></div>` : ""}
+            <div><div class="mb-1 text-xs font-medium text-muted">Images (${p.image_count}/${POST_MAX[p.kind]})${p.kind === "reel" ? " · 3 seconds each in the video" : ""}</div>
+              <div class="flex flex-wrap gap-2">${imgs.map((src, i) => `<div class="ig-thumb"><img src="${src}" alt="Image ${i + 1}">${editable ? `<button type="button" data-post-img-del="${i}" aria-label="Remove image ${i + 1}" style="position:absolute;top:3px;right:3px" class="grid size-5 place-items-center rounded-full bg-ink/30 text-[11px] text-white">✕</button>` : ""}</div>`).join("")}
+                ${canAdd ? `<label class="ig-thumb grid cursor-pointer place-items-center border-dashed text-center text-xs text-muted hover:bg-accent-soft"><input type="file" accept="image/jpeg,image/png" multiple class="sr-only" data-post-upload="${p.id}"><span>+ Upload</span></label>` : ""}</div>
+              ${canAdd ? `<div class="mt-2 flex gap-2"><input id="postPrompt" maxlength="600" class="h-9 min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 text-sm" placeholder="Or describe a picture for AI, e.g. shiny SUV after a foam wash, morning light">
+                <button type="button" data-post-gen class="h-9 shrink-0 rounded-lg border border-line px-3 text-sm hover:bg-accent-soft">✨ Generate</button></div>` : ""}</div>
+            <div><label class="mb-1 block text-xs font-medium text-muted" for="postWhen">When</label>
+              <div class="flex flex-wrap items-center gap-2"><input id="postWhen" type="datetime-local" value="${toLocalInput(p.scheduled_at)}" class="h-9 rounded-lg border border-line bg-surface px-3 text-sm">
+              <span class="text-xs text-muted">Leave empty to post right after you approve. Times are in this computer's time zone.</span></div></div>
+            <div class="flex flex-wrap gap-2 pt-1">
+              <button type="button" data-post-request class="h-10 rounded-lg bg-accent px-4 text-sm font-medium text-accent-fg">Request approval to post</button>
+              <button type="button" data-post-save class="h-10 rounded-lg border border-line px-4 text-sm hover:bg-accent-soft">Save draft</button>
+              <button type="button" data-post-del class="ml-auto h-10 rounded-lg border border-line px-3 text-sm text-danger hover:bg-danger/5">Delete</button>
+            </div>
+          </fieldset>
+          ${!editable && p.status !== "published" ? `<p class="mt-3 text-xs text-muted">Locked while ${POST_STATUS[p.status][0].toLowerCase()}. Reject the approval to edit it again.</p>` : ""}
+        </div>
+        <div>${postPreview(p, imgs)}</div>
+      </div>`;
+    pane.dataset.postId = p.id;
+    if (p.kind === "reel" && !p.has_video && imgs.length > 1) {  // slideshow preview, 3 s per image
+      let i = 0;
+      slideTimer = setInterval(() => { const el = $("igSlide"); if (!el) return clearInterval(slideTimer); i = (i + 1) % imgs.length; el.src = frameUrl(p, i); }, 3000);
+    }
+  }
+  function postFields() {
+    const cap = $("postCaption"), when = $("postWhen");
+    const body = { scheduled_at: fromLocalInput(when ? when.value : "") };
+    if (cap) body.caption = cap.value;
+    if ($("ovHeadline")) body.overlay = { headline: $("ovHeadline").value, details: $("ovDetails").value, cta: $("ovCta").value };
+    return body;
+  }
+  async function savePost(id) { return api(`/api/posts/${id}`, { method: "PATCH", body: JSON.stringify(postFields()) }); }
+  let ovTimer = null;
+  document.body.addEventListener("input", (e) => {
+    if (e.target.id === "postCaption") $("postCount").innerHTML = captionStats(e.target.value);
+    if (e.target.matches("[data-ov]")) {  // save the text, then reload the rendered 9:16 preview frame
+      clearTimeout(ovTimer);
+      ovTimer = setTimeout(async () => {
+        const id = $("postEditor").dataset.postId, el = $("igSlide");
+        try { await savePost(id); if (el) el.src = `/api/posts/${id}/preview/0?t=${Date.now()}`; } catch (err) { toast(err.message, "error"); }
+      }, 600);
+    }
+  });
+  document.body.addEventListener("change", async (e) => {
+    const input = e.target.closest("[data-post-upload]");
+    if (!input || !input.files || !input.files.length) return;
+    const id = input.dataset.postUpload;
+    try {
+      await savePost(id);
+      for (const f of input.files) { const fd = new FormData(); fd.append("file", f); await api(`/api/posts/${id}/images`, { method: "POST", body: fd }); }
+      toast("Image added");
+    } catch (err) { toast(err.message, "error"); }
+    renderPosts(id);
+  });
+  document.body.addEventListener("click", async (e) => {
+    const t = e.target.closest("[data-post-new],[data-post-kind],[data-post-img-del],[data-post-gen],[data-post-save],[data-post-request],[data-post-del]");
+    if (!t) return;
+    const id = $("postEditor") && $("postEditor").dataset.postId;
+    try {
+      if (t.matches("[data-post-new]")) {
+        const p = await api("/api/posts", { method: "POST", body: JSON.stringify({ kind: "photo" }) });
+        location.hash = `#posts/${p.id}`;
+        return;
+      }
+      t.disabled = true;
+      if (t.matches("[data-post-kind]")) { await api(`/api/posts/${id}`, { method: "PATCH", body: JSON.stringify({ ...postFields(), kind: t.dataset.postKind }) }); }
+      else if (t.matches("[data-post-img-del]")) { await api(`/api/posts/${id}/images/${t.dataset.postImgDel}`, { method: "DELETE" }); }
+      else if (t.matches("[data-post-gen]")) {
+        const prompt = $("postPrompt").value.trim();
+        if (prompt.length < 3) { toast("Describe the picture first", "error"); t.disabled = false; return; }
+        t.innerHTML = `<span class="inline-flex items-center gap-1">${spinner()} Generating…</span>`;
+        await savePost(id);
+        await api(`/api/posts/${id}/generate-image`, { method: "POST", body: JSON.stringify({ prompt }) });
+        toast("AI image added");
+      } else if (t.matches("[data-post-save]")) { await savePost(id); toast("Draft saved"); }
+      else if (t.matches("[data-post-request]")) {
+        t.innerHTML = `<span class="inline-flex items-center gap-1">${spinner()} Preparing…</span>`;
+        await savePost(id);
+        await api(`/api/posts/${id}/request`, { method: "POST" });
+        toast("Approval requested. Nothing is posted until you approve.");
+        state.pendingCount += 1; renderNav();
+      } else if (t.matches("[data-post-del]")) {
+        return confirmDialog({ title: "Delete this post?", body: "The draft and its images are deleted from Milo. Posts already on Instagram stay there.", ok: "Delete",
+          onOk: async () => { await api(`/api/posts/${id}`, { method: "DELETE" }); toast("Post deleted"); location.hash = "#posts"; renderPosts(); } });
+      }
+    } catch (err) { toast(err.message, "error"); }
+    renderPosts(id);
+  });
+
   // =====================================================================
   // ROUTER + EVENTS
   // =====================================================================
   function route() {
     const [view, arg] = (location.hash.slice(1) || "dashboard").split("/");
-    const known = ["dashboard", "campaigns", "campaign", "approvals", "inbox", "analytics", "activity", "settings"];
+    const known = ["dashboard", "campaigns", "campaign", "approvals", "inbox", "posts", "analytics", "activity", "settings"];
     const v = known.includes(view) ? view : "dashboard";
     document.querySelectorAll(".view").forEach((el) => el.classList.add("hidden"));
     $("view-" + v).classList.remove("hidden");
     $("drawer").classList.add("hidden");
     renderNav();
     window.scrollTo(0, 0);
-    ({ dashboard: renderDashboard, campaigns: renderCampaigns, campaign: () => renderCampaign(arg), approvals: renderApprovals, inbox: () => renderInbox(arg), analytics: renderAnalytics, activity: renderActivity, settings: renderSettings })[v]();
+    ({ dashboard: renderDashboard, campaigns: renderCampaigns, campaign: () => renderCampaign(arg), approvals: renderApprovals, inbox: () => renderInbox(arg), posts: () => renderPosts(arg), analytics: renderAnalytics, activity: renderActivity, settings: renderSettings })[v]();
   }
   function refreshCurrent() { route(); }
 

@@ -9,7 +9,8 @@ from pymongo import ASCENDING, MongoClient, ReturnDocument
 from pymongo.database import Database
 
 from app.config import get_settings
-from app.db.models import Approval, AuditLog, Campaign, Doc, InboundMessage, MetricSnapshot
+from app.db.models import (Approval, AuditLog, Campaign, CustomerProfile, Doc, InboundMessage, KnowledgeDoc,
+                           MetricSnapshot)
 
 T = TypeVar("T", bound=Doc)
 
@@ -35,6 +36,8 @@ def init_db() -> None:
     d[Campaign.collection].create_index([("status", ASCENDING)])
     d[InboundMessage.collection].create_index([("mid", ASCENDING)], unique=True)  # webhook retries
     d[InboundMessage.collection].create_index([("page_id", ASCENDING), ("sender_id", ASCENDING)])
+    d[CustomerProfile.collection].create_index([("platform", ASCENDING), ("customer_id", ASCENDING)], unique=True)
+    d[KnowledgeDoc.collection].create_index([("sha256", ASCENDING)])
 
 
 def next_id(collection: str) -> int:

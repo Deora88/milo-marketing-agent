@@ -58,6 +58,18 @@ def _ts(ms) -> datetime | None:
         return None
 
 
+def _story(m: dict) -> dict:
+    """Instagram: a reply to your story (message.reply_to.story) or a mention of you in theirs
+    (attachment type story_mention). The URL is Meta's CDN link and expires, so only the link is kept."""
+    story = ((m.get("reply_to") or {}).get("story")) or {}
+    if story.get("url") or story.get("id"):
+        return {"kind": "reply", "url": str(story.get("url") or "")[:2000], "id": str(story.get("id") or "")}
+    for a in m.get("attachments") or []:
+        if a.get("type") == "story_mention":
+            return {"kind": "mention", "url": str((a.get("payload") or {}).get("url") or "")[:2000], "id": ""}
+    return {}
+
+
 def parse_events(body: dict) -> list[InboundMessage]:
     """Messages and postbacks from a webhook body. Other event types (reads, deliveries) are ignored for now."""
     platform = PLATFORM.get(body.get("object", ""))
@@ -75,7 +87,7 @@ def parse_events(body: dict) -> list[InboundMessage]:
                     platform=platform, page_id=str(entry.get("id", "")), sender_id=sender, recipient_id=recipient,
                     customer_id=recipient if echo else sender,
                     mid=m["mid"], text=(m.get("text") or "")[:2000], is_echo=echo,
-                    app_id=str(m.get("app_id") or "") if echo else "",
+                    app_id=str(m.get("app_id") or "") if echo else "", story=_story(m),
                     referral=ev.get("referral") or m.get("referral") or {}, sent_at=_ts(ev.get("timestamp"))))
             elif "postback" in ev:
                 p = ev["postback"] or {}
@@ -87,13 +99,17 @@ def parse_events(body: dict) -> list[InboundMessage]:
     return out
 
 
-async def _run_agent(ids: list[int]) -> None:
-    """After the 200 is sent: let the DM agent look at each new message (drafts or sends a reply)."""
+async def _run_agent(ids: list[int], draft_only: bool = False) -> None:
+    """After the 200 is sent: let the DM agent look at each new message (drafts or sends a reply).
+
+    draft_only=True (startup recovery): only draft, even with DM_AUTOREPLY=true, so a restart never sends
+    replies to hours-old messages by itself. A person sees the drafts in the Inbox."""
     from app.dm import agent
 
+    settings = get_settings().model_copy(update={"dm_autoreply": False}) if draft_only else None
     for mid in ids:
         try:
-            await agent.handle(mid)
+            await agent.handle(mid, settings=settings)
         except Exception as exc:  # noqa: BLE001 - never let one message break the others
             log.exception("dm agent failed for message %s", mid)
             try:
@@ -137,7 +153,8 @@ async def receive(request: Request, background: BackgroundTasks):
 
     stored = duplicates = 0
     new_inbound: list[int] = []
-    for msg in parse_events(body):
+    events = parse_events(body)
+    for msg in events:
         try:
             store.insert(msg)
             stored += 1
@@ -151,6 +168,11 @@ async def receive(request: Request, background: BackgroundTasks):
     if stored:
         store.audit("dm_received", count=stored, platform=PLATFORM[body["object"]])
     log.info("webhook: %d new event(s), %d duplicate(s)", stored, duplicates)
+    senders = [(m.platform, m.page_id, m.customer_id) for m in events if not m.is_echo and m.customer_id]
+    if senders:  # names for the Inbox, looked up after the 200 (cached; dry run never calls Meta)
+        from app.dm import profiles
+
+        background.add_task(profiles.ensure_many, senders)
     if new_inbound and get_settings().dm_agent_enabled:
         background.add_task(_run_agent, new_inbound)
     return PlainTextResponse("EVENT_RECEIVED")

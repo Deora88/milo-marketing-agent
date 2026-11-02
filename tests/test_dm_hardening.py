@@ -182,7 +182,7 @@ def test_send_failure_is_audited_and_marked_for_a_person():
     m = _customer("Which areas?", "m1")
     done = asyncio.run(agent.handle(m.id, settings=s, llm=_llm({"action": "answer", "faq_ids": [fid], "reply": "x"}),
                                     client=FakeClient(s, fail=TimeoutError("read timed out"))))
-    assert done.agent_action == "failed" and done.handed_off and "TimeoutError" in done.agent_note
+    assert done.agent_action == "failed" and not done.handed_off and "TimeoutError" in done.agent_note
     assert store.find(AuditLog, {"event": "dm_agent_failed"})
     assert inbox.list_conversations()[0]["needs_person"] is True
 

@@ -5,6 +5,7 @@ _PATTERNS = [
     re.compile(r"EAA[A-Za-z0-9]{20,}"),               # Meta access tokens
     re.compile(r"sk-or-[A-Za-z0-9-]{10,}"),           # OpenRouter keys
     re.compile(r"tvly-[A-Za-z0-9-]{10,}"),            # Tavily keys
+    re.compile(r"\b\d{6,}\|[0-9a-f]{32}\b"),            # Meta app access token (app id | app secret)
     re.compile(r"(access_token|api_key|token|secret)=([^&\s\"']+)", re.I),
     re.compile(r"mongodb(\+srv)?://[^@\s]+@", re.I),  # credentials in a MongoDB URI
 ]

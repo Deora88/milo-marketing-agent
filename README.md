@@ -68,13 +68,15 @@ app/
   db/                MongoDB: models (Campaign, Approval, MetricSnapshot, AuditLog, InboundMessage, FaqEntry, Lead) + store (ids, atomic claim)
   dm/inbox.py        DM conversations, Meta's reply window, replies through the Send API
   dm/agent.py        DM bot: FAQ answers, lead capture, hand-off (drafts unless DM_AUTOREPLY=true)
+  dm/knowledge.py    business PDFs: upload checks, text extraction (pypdf), passages the bot may cite
+  dm/profiles.py     sender names from Meta (Messenger profile / Instagram user), cached
   security.py        Host allow-list, X-Milo-Client header on changes (CSRF), optional API token
   util/redact.py     masks tokens and keys in error text
-  api/               routes: chat (SSE), campaigns (+ change requests), approvals, insights (status, summary, audit), webhooks (Meta DMs), inbox (DM threads + replies), faq (bot FAQ + leads)
+  api/               routes: chat (SSE), campaigns (+ change requests), approvals, insights (status, summary, audit), webhooks (Meta DMs), inbox (DM threads + replies), faq (bot FAQ + leads), knowledge (business PDFs)
 web/
   index.html         the Milo UI (single file, served at /)
   milo.css           prebuilt Tailwind styles; tokens in tailwind.config.js
-tests/               110 tests: MCP tools + approval gate (caps, spend switch, CSRF, double approve, failures), MCP over
+tests/               195 tests: MCP tools + approval gate (caps, spend switch, CSRF, double approve, failures), MCP over
                      stdio, HTTP API, chat streaming, Meta client + campaign builder, previews, optimizer, research, image generation,
                      DM webhook + inbox + bot (in-memory MongoDB via mongomock, HTTP mocked with respx; a personal .env is ignored)
 ```
@@ -195,8 +197,18 @@ options, each with a "based on" note. The chat shows the sources under the reply
 | GET | `/api/inbox/{platform}/{page_id}/{customer_id}` | One conversation's messages (marks new ones read) |
 | POST | `/api/inbox/{platform}/{page_id}/{customer_id}/reply` | Reply as the Page via Meta's Send API; body `{text}`; 409 outside the reply window |
 | POST | `/api/inbox/{platform}/{page_id}/{customer_id}/suggest` | Ask the DM bot for a draft reply to the latest message (never sends) |
+| GET · POST | `/api/knowledge` | Business PDFs for the DM bot: list, upload (multipart `file`) |
+| GET · PATCH · DELETE | `/api/knowledge/{id}` | Read a PDF's extracted text page by page, turn it on/off for the bot, delete it |
+| POST | `/api/inbox/{platform}/{page_id}/{customer_id}/handback` | Hand the conversation back to the DM bot (earlier hand-offs and Page replies stop counting) |
 | GET · POST | `/api/faq` · PUT/DELETE `/api/faq/{id}` | The bot's FAQ (it answers only from these); `POST /api/faq/sample` loads the sample home-cleaning FAQ |
 | GET | `/api/leads` | Contacts captured from DMs (name, phone, conversation) |
+| GET | `/api/leads.csv` | The same leads as a CSV file for Excel (name, phone, platform, sender id, message) |
+| GET | `/api/instagram/check` | Read-only check of the Meta-side setup for Instagram DMs |
+| GET · POST | `/api/posts` | Instagram posts: list, create a draft (`kind`, `caption`, `scheduled_at`) |
+| GET · PATCH · DELETE | `/api/posts/{id}` | One post: read, edit (draft/failed only), delete |
+| POST · DELETE | `/api/posts/{id}/images`, `/generate-image`, `/images/{i}` | Add (upload or AI) / remove images |
+| POST | `/api/posts/{id}/request` | Request approval to publish (formats media, builds the Reel video) |
+| GET | `/media/{token}/{file}` | Public, read-only: post media for Meta's downloader |
 | GET | `/api/status` | Model, database check, dry-run, spend switch and caps, Meta, metrics, optimizer, research, image generation (model, used today) — no secrets |
 | GET | `/api/summary` | Dashboard KPIs and daily spend (last 7 days) |
 | GET | `/api/audit` | Activity log |
@@ -267,6 +279,59 @@ go out as the Page through Meta's Send API (`POST /{page_id}/messages`) and are 
 - **Not yet:** automatic replies. The DM agent (FAQ, lead capture, hand-off) is step 3; it will use the same
   sending code with the same window rules and can never use the human tag.
 
+## Instagram DMs
+Instagram Direct messages work like Messenger ones (Inbox, bot, leads, names), through the **Messenger API for
+Instagram** with the Facebook Page: no separate Instagram login or keys.
+
+- **How it works:** Meta sends Instagram DMs to the same `/webhooks/meta` as `"object": "instagram"`; `entry.id`
+  is the Instagram account id. Replies go out through the **linked Facebook Page**: `POST /{META_PAGE_ID}/messages`
+  with the Page token. Milo checks the DM went to the Instagram account linked to that Page
+  (`META_INSTAGRAM_ACCOUNT_ID`, or asked from Meta once) and refuses otherwise.
+- **Limits:** Instagram replies must be under 1,000 characters (Hindi letters count as 3 bytes); the bot sends
+  FAQ answers only if they fit, otherwise it hands off. Same 24-hour window; `HUMAN_AGENT` works the same way.
+- **Names:** `name` and `@username` from Meta (`GET /{IGSID}?fields=name,username`, Page token).
+- **Setup:**
+  1. Link the Instagram professional account to the Facebook Page (Meta Business Suite > Settings > Accounts >
+     Instagram accounts).
+  2. Instagram app > Settings > Messages and story replies > Message controls > Connected tools > turn on
+     **Allow access to messages**.
+  3. App Dashboard > Webhooks > **Instagram**: Callback URL = your `https://…/webhooks/meta`, the same verify
+     token, subscribe to `messages` and `messaging_postbacks`.
+  4. Token permissions: `instagram_basic`, `instagram_manage_messages`, `pages_manage_metadata`,
+     `pages_messaging`. The app must be published (Live) to receive webhooks; with Standard Access only people
+     with a role on the app can DM it.
+  5. **Settings > Check Instagram DM setup** (read-only, `GET /api/instagram/check`) shows what is still
+     missing: Page link, Page subscriptions, the app's `instagram` webhook, and whether a DM has arrived.
+
+## Instagram posts (photo, carousel, Reel, Story)
+The **Posts** page creates organic posts for the Instagram account linked to your Page (no budget, not ads), with
+the same approval gate as ads: nothing is posted until you click **Approve**.
+
+- **Types:** Photo (1 image), Carousel (2–10), **Reel** (1–10 images turned into a 9:16 video, 3 s per image, made
+  with the ffmpeg bundled in `imageio-ffmpeg`), **Story** (1 image, 9:16, disappears after 24 hours, no caption).
+- **Images:** upload JPG/PNG or **✨ Generate** with FLUX. Milo stores JPEGs and formats them per type when you
+  request publishing (feed: 4:5 to 1.91:1; Stories/Reels: 1080×1920 over a blurred background).
+- **Caption checks:** 2,200 characters, 30 hashtags, 20 @mentions (Instagram's limits).
+- **Text on image (Stories and Reels):** headline (60), details (90) and a button-style call to action (30)
+  drawn onto the 9:16 frame above and below the picture, in Plus Jakarta Sans (bundled in `app/social/fonts`,
+  SIL Open Font License) and the brand orange. Instagram's API can't add text or stickers, so the text is part
+  of the image; the preview shows the exact frame. Emoji are dropped (the font can't draw them).
+- **Scheduling:** optional time (at least 5 minutes, at most 60 days ahead). After approval the post waits as
+  *Scheduled*; the scheduler posts it at that time (Milo must be running).
+- **Chat:** "Make a Reel about our ceramic coating" → Milo drafts it (`create_instagram_post`) and requests
+  approval (`request_post_publish`). It can never post by itself.
+- **How it posts:** Instagram Content Publishing API through the Page token: `POST /{ig-user-id}/media` per item
+  (carousel children, `REELS`, `STORIES`), waits for `status_code=FINISHED`, then `POST /{ig-user-id}/media_publish`
+  and shows **View on Instagram**. Meta downloads the media from `PUBLIC_BASE_URL/media/<random token>/<file>`:
+  the only other public route besides `/webhooks/`, read-only, and only for a post waiting to be published.
+- **Setup:** set `PUBLIC_BASE_URL=https://<your ngrok domain>` in `.env`, and add `instagram_content_publish`
+  to the token (App Dashboard > Use cases > Manage messaging & content on Instagram > Permissions). Dry run
+  marks posts published without contacting Instagram.
+- **Limits:** about 50–100 API posts per 24 hours per account; no music, filters, stickers or shopping tags
+  through the API.
+- **Story replies and mentions** arrive as DMs and show in the Inbox as "Replied to your story" or "Mentioned
+  you in their story" (with a link while Meta's story link is valid).
+
 ## DM bot (step 3 of DM handling)
 For every new DM the bot does one of three things, logged in Activity and shown in the Inbox:
 
@@ -281,11 +346,40 @@ For every new DM the bot does one of three things, logged in Activity and shown 
 - **Guardrails:** separate from the ads agent, with no tools that can change ads. DM text is fenced as untrusted
   data; the model must cite FAQ ids that exist, otherwise the reply becomes a hand-off (no invented prices).
   Phone numbers are detected in code. A model error is a hand-off. It obeys Meta's reply window, never uses the
-  `HUMAN_AGENT` tag, says it is automated in its first message, and stays out of a conversation once a person
-  has replied.
+  `HUMAN_AGENT` tag and says it is automated in its first message. With auto-reply on it sends the stored FAQ
+  answers word for word, whole entries only (never cut mid-sentence); if they don't fit one message it hands off.
+- **When the bot stays out of a conversation:**
+  - a person replied as the Page (Milo Inbox, Business Suite, Instagram app): until someone clicks
+    **Hand back to bot** in the Inbox (`POST /api/inbox/{platform}/{page_id}/{customer_id}/handback`);
+  - the bot handed a message to a person: for `DM_HANDOFF_HOURS` (default 24) after that message, then it
+    answers FAQ questions again (or click **Hand back to bot** sooner);
+  - a technical failure (Meta timeout, database error) does **not** keep it out: the message is marked "failed"
+    and the conversation shows "needs a person", but the bot still answers the customer's next message.
+  The Inbox shows why the bot is staying out, including the app id of a Page reply from another app.
+- **Never stuck:** one model reply may take at most 30 seconds (free OpenRouter models sometimes never answer;
+  then the message goes to a person), and a whole bot run at most 120 seconds. Every 2 minutes Milo marks any
+  message left on "working on it" for over 5 minutes as failed, so a person sees it and **Ask the bot for a
+  draft** works again. The Inbox refreshes by itself while the bot is working. For faster, steadier replies, pin
+  one free non-reasoning model with `MILO_MODEL` instead of `openrouter/openrouter/free` (see `.env.example`).
+- **After a restart:** DMs that arrived but were never handled (last 24 hours) are run again as drafts only,
+  even with `DM_AUTOREPLY=true`, so Milo never auto-sends replies to hours-old messages.
 - **FAQ:** edit it under the Inbox ("Bot FAQ"). **Load sample FAQ** adds six labelled sample answers for the demo
   home-cleaning business; replace them with the real business's words.
-- **Settings:** `DM_AGENT_ENABLED` (default true), `DM_AUTOREPLY` (default false), `DM_BUSINESS_NAME`. It uses the
+- **Business documents (PDF):** under the Inbox, **Upload PDF** (price list, brochure, policies; PDF only, up to
+  10 MB and 100 pages). Milo keeps only the extracted text, page by page; **Read** shows exactly what the bot sees,
+  **Turn off** hides a document from the bot, **Delete** removes it. Scanned PDFs (no text layer) are refused:
+  there is no OCR. For each DM the bot is shown the few passages that share the most words with the message, with
+  ids it must cite (checked in code, otherwise a hand-off). **An answer that uses a PDF is always a draft**, even
+  with `DM_AUTOREPLY=true`: a person checks it and clicks Send. The draft notes the PDF and page it came from.
+- **Leads:** the **Leads** card at the top of the Inbox lists every phone number people shared in DMs (newest
+  first) with the sender's name and id, the message, the time and **Open chat**. **Download CSV** saves them all
+  for Excel; cells that look like formulas are saved as text so the file can't run anything.
+- **Sender names:** the Inbox shows the sender's name and full id (PSID / Instagram id). Milo asks Meta once per
+  person with the Page token (Messenger: `first_name,last_name`; Instagram: `name,username`) and caches it. If
+  Meta shares no name (privacy settings, missing permission), it shows "Unknown sender" and asks again after a
+  day. Dry run never calls Meta.
+- **Settings:** `DM_AGENT_ENABLED` (default true), `DM_AUTOREPLY` (default false), `DM_HANDOFF_HOURS`
+  (default 24), `DM_BUSINESS_NAME`. It uses the
   same model as chat (`MILO_MODEL`).
 
 ## Future work

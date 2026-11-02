@@ -1,10 +1,13 @@
 """Inbox API (localhost only, like every /api route): read DM conversations and reply by hand."""
-from fastapi import APIRouter, HTTPException
+import logging
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
-from app.dm import inbox
+from app.dm import inbox, profiles
 from app.util.redact import redact
 
+log = logging.getLogger("milo.inbox")
 router = APIRouter(prefix="/api/inbox", tags=["inbox"])
 
 
@@ -14,16 +17,25 @@ class ReplyIn(BaseModel):
 
 @router.get("")
 def conversations():
-    """Conversations, newest first, with unread count and reply-window state."""
-    return inbox.list_conversations()
+    """Conversations, newest first, with unread count, reply-window state and the sender's name and id."""
+    rows = inbox.list_conversations()
+    cache = profiles.all_by_key()
+    for r in rows:
+        r["sender"] = profiles.display(r["platform"], r["customer_id"], cache)
+    return rows
 
 
 @router.get("/{platform}/{page_id}/{customer_id}")
-def thread(platform: str, page_id: str, customer_id: str):
-    """All messages with one person (marks their new messages as read)."""
+async def thread(platform: str, page_id: str, customer_id: str):
+    """All messages with one person (marks their new messages as read), with the sender's name and id."""
     data = inbox.open_thread(platform, page_id, customer_id)
     if not data["messages"]:
         raise HTTPException(404, "conversation not found")
+    try:  # cached; asks Meta only if the name is missing (at most once a day after a failure)
+        await profiles.ensure(platform, page_id, customer_id)
+    except Exception:  # noqa: BLE001 - the name is a nicety: show the id rather than fail the Inbox
+        log.exception("sender lookup failed")
+    data["sender"] = profiles.display(platform, customer_id)
     return data
 
 
@@ -46,6 +58,26 @@ async def suggest(platform: str, page_id: str, customer_id: str):
     s = get_settings().model_copy(update={"dm_autoreply": False, "dm_agent_enabled": True})
     done = await agent.handle(msg.id, settings=s, force=True)  # a person asked: draft even if they own it
     return {"message": done.model_dump() if done else None}
+
+
+@router.post("/{platform}/{page_id}/{customer_id}/handback")
+async def handback(platform: str, page_id: str, customer_id: str, background: BackgroundTasks):
+    """Let the DM bot answer this conversation again (clears earlier hand-offs and Page replies). If the
+    customer's latest message is still unanswered, the bot answers it now (auto-sent only with DM_AUTOREPLY=true)."""
+    from app.db import store
+    from app.db.models import InboundMessage
+    from app.dm import agent
+
+    if not inbox.hand_back(platform, page_id, customer_id):
+        raise HTTPException(404, "conversation not found")
+    msgs = inbox.thread_messages(platform, page_id, customer_id)
+    last = msgs[-1] if msgs else None
+    rerun = bool(last and not last.is_echo and last.agent_action in ("skipped", "handoff", "failed")
+                 and store.claim(InboundMessage, last.id, {"agent_action": last.agent_action},
+                                 {"agent_action": "", "agent_note": "", "suggested_reply": "", "handed_off": False}))
+    if rerun:
+        background.add_task(agent.handle, last.id)
+    return {"ok": True, "answering_latest": rerun}
 
 
 @router.post("/{platform}/{page_id}/{customer_id}/reply")

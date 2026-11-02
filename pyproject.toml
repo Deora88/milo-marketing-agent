@@ -15,6 +15,9 @@ dependencies = [
     "mcp>=1.10,<2",
     "pymongo>=4.8",
     "python-multipart>=0.0.9",
+    "pypdf>=5",
+    "pillow>=11",
+    "imageio-ffmpeg>=0.5",
 ]
 
 [dependency-groups]

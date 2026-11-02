@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api import approvals, campaigns, chat, faq, inbox, insights, webhooks
+from app.api import approvals, campaigns, chat, faq, inbox, insights, instagram, knowledge, posts, webhooks
 from app.config import get_settings
 from app.db.store import init_db
 from app.jobs import scheduler
@@ -32,8 +32,8 @@ async def lifespan(app: FastAPI):
             from app.dm.agent import recover_unprocessed
 
             ids = recover_unprocessed()
-            if ids:
-                asyncio.get_running_loop().create_task(_run_agent(ids))
+            if ids:  # keep a reference: asyncio only holds tasks weakly, an unreferenced one can be collected
+                app.state.dm_recovery_task = asyncio.get_running_loop().create_task(_run_agent(ids, draft_only=True))
         except Exception:  # noqa: BLE001 - start anyway
             logging.getLogger("milo").exception("could not recover unhandled DMs")
     scheduler.start()
@@ -49,6 +49,10 @@ app.include_router(insights.router)
 app.include_router(webhooks.router)
 app.include_router(inbox.router)
 app.include_router(faq.router)
+app.include_router(knowledge.router)
+app.include_router(instagram.router)
+app.include_router(posts.router)
+app.include_router(posts.public)
 
 # The UI in web/ is served from this same origin, so browsers need no CORS.
 # Allowed origins only matter for a separate local dev server (e.g. a frontend on another port).

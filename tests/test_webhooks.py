@@ -141,5 +141,5 @@ def test_background_failure_is_recorded(monkeypatch):
     m = store.insert(InboundMessage(platform="messenger", page_id="999", sender_id="p", customer_id="p", mid="x"))
     asyncio.run(webhooks._run_agent([m.id]))
     row = store.get(InboundMessage, m.id)
-    assert row.agent_action == "failed" and row.handed_off
+    assert row.agent_action == "failed" and not row.handed_off  # flagged for a person, bot not silenced
     assert store.find(AuditLog, {"event": "dm_agent_failed"})

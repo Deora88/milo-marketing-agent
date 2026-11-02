@@ -23,6 +23,7 @@ STANDARD_WINDOW = timedelta(hours=24)
 AD_WINDOW = timedelta(days=7)
 HUMAN_AGENT_WINDOW = timedelta(days=7)
 MAX_TEXT = 2000  # Messenger text limit
+MAX_IG_BYTES = 1000  # Instagram: under 1,000 characters and at most 1,000 bytes (UTF-8; a Hindi letter is 3 bytes)
 _page_tokens: dict[str, str] = {}
 
 
@@ -84,10 +85,55 @@ def by_person(m: InboundMessage, settings: Settings | None = None) -> bool:
     return not (own_app and m.app_id == own_app)
 
 
+def _naive(dt: datetime | None) -> datetime | None:
+    return dt.replace(tzinfo=None) if dt else dt  # MongoDB returns naive UTC, new objects are aware
+
+
+def _since_hand_back(msgs: list[InboundMessage]) -> list[InboundMessage]:
+    """Messages after the last "Hand back to bot" click (all of them if nobody clicked it)."""
+    resumed = max((_naive(m.bot_resumed_at) for m in msgs if m.bot_resumed_at), default=None)
+    # >=: MongoDB keeps milliseconds only, so a reply in the same millisecond as the click must still count
+    return [m for m in msgs if resumed is None or _naive(_when(m)) >= resumed]
+
+
+def bot_hold(msgs: list[InboundMessage], settings: Settings | None = None, at: datetime | None = None) -> str:
+    """Why the DM bot must stay out of this conversation right now, or "" if it may answer.
+
+    - A person replied as the Page (Milo Inbox, Business Suite, Instagram app): until someone clicks
+      "Hand back to bot".
+    - The bot handed a message to a person (not in the FAQ): for DM_HANDOFF_HOURS after that message, so one
+      FAQ miss doesn't silence the bot for this customer for good.
+    - A technical failure (Meta timeout, database error) never keeps the bot out.
+    """
+    s = settings or get_settings()
+    at = _naive(at or now())
+    live = _since_hand_back(msgs)
+    for m in reversed(live):
+        if by_person(m, s):
+            where = "in the Milo Inbox" if m.sent_by == "human" else f"from another app (app_id {m.app_id or 'none'})"
+            return f"a person replied as the Page {where}"
+    hold = timedelta(hours=s.dm_handoff_hours)
+    for m in reversed(live):
+        if not m.is_echo and m.handed_off and at - _naive(_when(m)) < hold:
+            left = hold - (at - _naive(_when(m)))
+            return f"handed to a person, bot stays out for {max(1, round(left.total_seconds() / 3600))} more hour(s)"
+    return ""
+
+
 def person_owns(msgs: list[InboundMessage], settings: Settings | None = None) -> bool:
-    """A person has this conversation: the agent handed it off, or a person replied as the Page.
-    Either one is permanent for the thread: once handed off, the bot stays out until a person clears it."""
-    return any(m.handed_off for m in msgs if not m.is_echo) or any(by_person(m, settings) for m in msgs)
+    """A person has this conversation right now (see bot_hold)."""
+    return bool(bot_hold(msgs, settings))
+
+
+def hand_back(platform: str, page_id: str, customer_id: str) -> int:
+    """A person gives the conversation back to the bot: earlier hand-offs and Page replies stop counting."""
+    msgs = [m for m in thread_messages(platform, page_id, customer_id) if not m.is_echo]
+    at = now()
+    for m in msgs:
+        store.update(InboundMessage, m.id, {"handed_off": False, "bot_resumed_at": at})
+    if msgs:
+        store.audit("dm_handed_back", platform=platform)
+    return len(msgs)
 
 
 def _key(m: InboundMessage) -> tuple[str, str, str]:
@@ -109,12 +155,13 @@ def list_conversations() -> list[dict]:
     for (platform, page_id, customer), msgs in groups.items():
         msgs.sort(key=_when)
         last = msgs[-1]
+        live = _since_hand_back(msgs)
         out.append({
             "platform": platform, "page_id": page_id, "customer_id": customer,
             "last_text": last.text, "last_at": _when(last), "last_from": "page" if last.is_echo else "customer",
             "unread": sum(1 for m in msgs if not m.is_echo and m.status == "new"),
-            "needs_person": any(m.handed_off for m in msgs if not m.is_echo)
-            and not any(by_person(m) for m in msgs),
+            "needs_person": any(m.handed_off or m.agent_action in ("handoff", "failed") for m in live if not m.is_echo)
+            and not any(by_person(m) for m in live),
             "messages": len(msgs), "window": reply_window(msgs).as_dict(),
         })
     return sorted(out, key=lambda r: r["last_at"], reverse=True)
@@ -126,8 +173,49 @@ def open_thread(platform: str, page_id: str, customer_id: str) -> dict:
         if not m.is_echo and m.status == "new" and store.claim(InboundMessage, m.id, {"status": "new"},
                                                                 {"status": "read"}):
             m.status = "read"
+    hold = bot_hold(msgs)
     return {"platform": platform, "page_id": page_id, "customer_id": customer_id,
-            "window": reply_window(msgs).as_dict(), "messages": [m.model_dump() for m in msgs]}
+            "window": reply_window(msgs).as_dict(), "bot": {"active": not hold, "hold": hold},
+            "messages": [m.model_dump() for m in msgs]}
+
+
+def text_fits(platform: str, text: str) -> bool:
+    if platform == "instagram":
+        return len(text.encode("utf-8")) < MAX_IG_BYTES
+    return len(text) <= MAX_TEXT
+
+
+_ig_linked: dict[str, str] = {}  # Facebook Page id -> its linked Instagram account id (asked from Meta once)
+
+
+async def sending_page(client: MetaClient, platform: str, page_id: str) -> str:
+    """The Facebook Page that sends (and looks up names) for a conversation.
+
+    Messenger: the Page itself. Instagram (Messenger API for Instagram, via Facebook Login): webhooks carry the
+    Instagram account id, but replies go through the linked Facebook Page (META_PAGE_ID) with its Page token.
+    The Instagram account must be the one linked to that Page, so a DM to another account is never answered as
+    the wrong business."""
+    if platform != "instagram":
+        return page_id
+    s = client.s
+    if not s.meta_page_id:
+        raise ReplyError("Set META_PAGE_ID (the Facebook Page linked to your Instagram account) to reply to "
+                         "Instagram DMs.")
+    if s.meta_dry_run:
+        return s.meta_page_id
+    linked = s.meta_instagram_account_id or _ig_linked.get(s.meta_page_id)
+    if not linked:
+        try:
+            resp = await client.get(f"/{s.meta_page_id}", fields="instagram_business_account")
+        except MetaAPIError as exc:
+            raise ReplyError(f"Couldn't check which Instagram account is linked to the Page: {exc}") from exc
+        linked = str((resp.get("instagram_business_account") or {}).get("id") or "")
+        if linked:
+            _ig_linked[s.meta_page_id] = linked
+    if linked != page_id:
+        raise ReplyError(f"This DM went to Instagram account {page_id}, but the Page's linked Instagram account is "
+                         f"{linked or 'none'}. Link it in Meta Business Suite or fix META_INSTAGRAM_ACCOUNT_ID.")
+    return s.meta_page_id
 
 
 async def _page_token(client: MetaClient, page_id: str) -> str:
@@ -150,13 +238,16 @@ async def send_reply(platform: str, page_id: str, customer_id: str, text: str, s
     text = (text or "").strip()
     if not text:
         raise ReplyError("Write a reply first.")
-    if len(text) > MAX_TEXT:
-        raise ReplyError(f"Replies can be at most {MAX_TEXT} characters.")
+    if not text_fits(platform, text):
+        raise ReplyError("Instagram replies must be under 1,000 characters (Hindi letters count as 3)."
+                         if platform == "instagram" else f"Replies can be at most {MAX_TEXT} characters.")
     msgs = thread_messages(platform, page_id, customer_id)
     if not msgs:
         raise ReplyError("Conversation not found.")
     win = reply_window(msgs)
-    body = {"recipient": {"id": customer_id}, "message": {"text": text}, "messaging_type": "RESPONSE"}
+    body = {"recipient": {"id": customer_id}, "message": {"text": text}}
+    if platform != "instagram":  # Messenger wants a messaging_type; Instagram's Send API takes just these two
+        body["messaging_type"] = "RESPONSE"
     if win.state == "human_agent":
         if sent_by != "human" or not s.meta_human_agent_enabled:
             raise ReplyError("The 24-hour reply window has closed. Meta allows a late reply only from a person with "
@@ -169,11 +260,12 @@ async def send_reply(platform: str, page_id: str, customer_id: str, text: str, s
     own = client is None
     client = client or MetaClient(s)
     try:
+        sender = await sending_page(client, platform, page_id)  # Instagram: the linked Facebook Page
         if s.meta_dry_run:
-            resp = await client.post(f"/{page_id}/messages", **body)  # logged only
+            resp = await client.post(f"/{sender}/messages", **body)  # logged only
         else:
-            token = await _page_token(client, page_id)
-            resp = await client.post(f"/{page_id}/messages", token=token, **body)
+            token = await _page_token(client, sender)
+            resp = await client.post(f"/{sender}/messages", token=token, **body)
     except MetaAPIError as exc:
         raise ReplyError(f"Meta refused the reply: {exc}") from exc
     finally:
