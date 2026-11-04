@@ -9,7 +9,9 @@ scheduler at the approved time. Flow (graph.facebook.com, Page access token, ins
 Meta downloads the media from PUBLIC_BASE_URL/media/<token>/<file>, served by app/api/posts.py.
 """
 import asyncio
+import logging
 import uuid
+from datetime import timedelta
 
 from app.db import store
 from app.db.models import SocialPost, now
@@ -21,6 +23,8 @@ from app.util.redact import redact
 
 POLL_SECONDS = 5
 POLL_LIMIT = 60  # 5 minutes for a video to be processed
+MISSED_AFTER = timedelta(hours=6)  # Milo was off at the approved time: don't post a stale offer by surprise
+log = logging.getLogger("milo.posts")
 
 
 class PublishError(RuntimeError):
@@ -105,10 +109,17 @@ async def publish_due(sleep=asyncio.sleep) -> list[int]:
     """Scheduler: publish approved posts whose time has come. One failure never stops the others."""
     done = []
     for p in store.find(SocialPost, {"status": "scheduled"}):
-        if p.scheduled_at and p.scheduled_at <= now():
-            try:
-                await publish(p.id, sleep=sleep)
-                done.append(p.id)
-            except Exception:  # noqa: BLE001 - recorded on the post (status failed) and in Activity
-                pass
+        if not p.scheduled_at or p.scheduled_at > now():
+            continue
+        if now() - p.scheduled_at > MISSED_AFTER:
+            note = (f"Missed: Milo wasn't running at the approved time ({p.scheduled_at:%Y-%m-%d %H:%M} UTC). "
+                    "Pick a new time and request approval again.")
+            if store.claim(SocialPost, p.id, {"status": "scheduled"}, {"status": "failed", "error": note}):
+                store.audit("post_failed", post_id=p.id, error=note)
+            continue
+        try:
+            await publish(p.id, sleep=sleep)
+            done.append(p.id)
+        except Exception:  # noqa: BLE001 - recorded on the post (status failed) and in Activity
+            log.exception("scheduled post %s could not be published", p.id)
     return done

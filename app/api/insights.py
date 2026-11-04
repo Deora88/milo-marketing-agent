@@ -40,6 +40,12 @@ def _dm_status(s, db_ok: bool) -> dict:
             "unread": store.count(InboundMessage, {"is_echo": False, "status": "new"}) if db_ok else 0}
 
 
+def _comments_unread(db_ok: bool) -> int:
+    from app.social import comments
+
+    return comments.unread() if db_ok else 0
+
+
 @router.get("/status")
 def status():
     s = get_settings()
@@ -56,6 +62,11 @@ def status():
         "meta_page_name": s.meta_page_name,
         "meta_configured": bool(s.meta_access_token and s.meta_ad_account_id and s.meta_page_id),
         "instagram_account_set": bool(s.meta_instagram_account_id),
+        "comments_unread": _comments_unread(db_state["ok"]),
+        "posts": {  # Instagram posts: Meta downloads the media from PUBLIC_BASE_URL
+            "public_base_url_set": s.public_base_url.startswith("https://"),
+            "ready": s.meta_dry_run or s.public_base_url.startswith("https://"),
+        },
         "spend": {
             "allowed": s.meta_allow_spend,
             "max_daily_budget_inr": s.max_daily_budget_inr,

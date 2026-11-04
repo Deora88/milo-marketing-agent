@@ -74,6 +74,14 @@ async def publish_scheduled_posts() -> None:
         log.info("published scheduled Instagram post(s) %s", ids)
 
 
+async def refresh_post_results() -> None:
+    from app.social.insights import refresh_due
+
+    ids = await refresh_due()
+    if ids:
+        log.info("refreshed Instagram results for post(s) %s", ids)
+
+
 def start() -> None:
     from app.approvals import recover_stuck_approvals
 
@@ -88,5 +96,7 @@ def start() -> None:
     scheduler.add_job(recover_approvals, "interval", minutes=5, id="recover_approvals", replace_existing=True)
     scheduler.add_job(fail_stuck_dms, "interval", minutes=2, id="fail_stuck_dms", replace_existing=True)
     scheduler.add_job(publish_scheduled_posts, "interval", minutes=1, id="publish_scheduled_posts",
+                      replace_existing=True)
+    scheduler.add_job(refresh_post_results, "interval", minutes=15, id="refresh_post_results",
                       replace_existing=True)
     scheduler.start()

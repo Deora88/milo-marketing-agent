@@ -75,6 +75,14 @@ def create_campaign_draft(
         welcome_message: Messenger only: the first message people see in the chat, max 300 characters.
     """
     errors = []
+    name = (name or "").strip()
+    if not name or len(name) > 100:
+        errors.append("name is required, at most 100 characters")
+    countries = [str(c).strip().upper() for c in (countries or []) if str(c).strip()]
+    if any(len(c) != 2 or not c.isalpha() for c in countries):
+        errors.append('countries must be 2-letter ISO codes, e.g. ["IN"]')
+    if not countries and radius_km is None:
+        errors.append("give at least one country (or local targeting with latitude, longitude and radius_km)")
     if daily_budget_inr < 100:
         errors.append("daily budget must be at least Rs 100")
     if not 18 <= age_min <= age_max <= 65:

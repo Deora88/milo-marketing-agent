@@ -9,8 +9,8 @@ from pymongo import ASCENDING, MongoClient, ReturnDocument
 from pymongo.database import Database
 
 from app.config import get_settings
-from app.db.models import (Approval, AuditLog, Campaign, CustomerProfile, Doc, InboundMessage, KnowledgeDoc,
-                           MetricSnapshot)
+from app.db.models import (Approval, AuditLog, Campaign, Comment, CustomerProfile, Doc, InboundMessage, KnowledgeDoc,
+                           Lead, MetricSnapshot, SocialPost)
 
 T = TypeVar("T", bound=Doc)
 
@@ -23,7 +23,12 @@ def db() -> Database:
 
         client: Any = mongomock.MongoClient(tz_aware=False)
     else:
-        client = MongoClient(s.mongodb_uri, serverSelectionTimeoutMS=5000, appname="milo")
+        kw: dict = {}
+        if s.mongodb_uri.startswith("mongodb+srv://") or "tls=true" in s.mongodb_uri.lower():
+            import certifi  # Atlas: use certifi's CA list (Windows' store can fail the TLS handshake)
+
+            kw["tlsCAFile"] = certifi.where()
+        client = MongoClient(s.mongodb_uri, serverSelectionTimeoutMS=5000, appname="milo", **kw)
     return client[s.mongodb_db]
 
 
@@ -38,6 +43,13 @@ def init_db() -> None:
     d[InboundMessage.collection].create_index([("page_id", ASCENDING), ("sender_id", ASCENDING)])
     d[CustomerProfile.collection].create_index([("platform", ASCENDING), ("customer_id", ASCENDING)], unique=True)
     d[KnowledgeDoc.collection].create_index([("sha256", ASCENDING)])
+    d[Approval.collection].create_index([("post_id", ASCENDING), ("status", ASCENDING)])
+    d[SocialPost.collection].create_index([("media_token", ASCENDING)])  # public /media/ lookups
+    d[SocialPost.collection].create_index([("status", ASCENDING)])
+    d[Lead.collection].create_index([("customer_id", ASCENDING)])
+    d[Comment.collection].create_index([("comment_id", ASCENDING)], unique=True)  # webhook retries
+    d[Comment.collection].create_index([("status", ASCENDING)])
+    d[AuditLog.collection].create_index([("event", ASCENDING), ("created_at", ASCENDING)])
 
 
 def next_id(collection: str) -> int:

@@ -149,6 +149,17 @@ def get_video(post_id: int):
     return FileResponse(p.video_path, media_type="video/mp4")
 
 
+@router.post("/{post_id}/insights/refresh")
+async def refresh_insights(post_id: int):
+    """Ask Instagram for the post's latest results now (read-only)."""
+    from app.social import insights
+
+    try:
+        return _out(await insights.fetch(post_id))
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @router.post("/{post_id}/request")
 def request_publish(post_id: int):
     """Like the agent's request tools: only creates a pending approval. Nothing is posted until Approve."""

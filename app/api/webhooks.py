@@ -1,7 +1,7 @@
-"""Meta webhook for DMs: Messenger and Instagram messages sent to the Page.
+"""Meta webhook: Messenger and Instagram DMs to the Page, and comments on its Facebook / Instagram posts.
 
-Step 1 of DM handling: verify, store, answer fast. Nothing here replies to anyone and nothing can change an ad;
-the DM agent that answers stored messages comes next.
+Verify, store, answer fast. Nothing here can change an ad; the DM bot (app/dm/agent.py) handles stored messages
+after the 200, and comments wait in Milo for a person (app/social/comments.py).
 
 - GET  /webhooks/meta: Meta's subscribe check (hub.mode, hub.verify_token, hub.challenge).
 - POST /webhooks/meta: one or more events. The X-Hub-Signature-256 header must be the HMAC-SHA256 of the raw
@@ -165,9 +165,18 @@ async def receive(request: Request, background: BackgroundTasks):
             old = (store.find(InboundMessage, {"mid": msg.mid}) or [None])[0]
             if old and not old.is_echo and not old.agent_action:
                 new_inbound.append(old.id)  # stored earlier but never handled (e.g. restart after the 200)
+    from app.social import comments
+
+    got = {"new": 0, "own": 0, "duplicate": 0, "updated": 0}
+    try:
+        got = comments.save_events(body)  # entry[].changes[]: Instagram "comments", Page "feed" comment items
+    except Exception:  # noqa: BLE001 - a comment problem must never lose the DMs in the same delivery
+        log.exception("webhook: could not store comment events")
     if stored:
         store.audit("dm_received", count=stored, platform=PLATFORM[body["object"]])
-    log.info("webhook: %d new event(s), %d duplicate(s)", stored, duplicates)
+    log.info("webhook: %s -> %d new DM event(s), %d duplicate(s); comments: %d new, %d from your own account, "
+             "%d duplicate(s), %d edit(s)", comments.describe(body), stored, duplicates, got["new"], got["own"],
+             got["duplicate"], got["updated"])
     senders = [(m.platform, m.page_id, m.customer_id) for m in events if not m.is_echo and m.customer_id]
     if senders:  # names for the Inbox, looked up after the 200 (cached; dry run never calls Meta)
         from app.dm import profiles

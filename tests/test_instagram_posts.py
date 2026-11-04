@@ -155,6 +155,17 @@ def test_scheduled_post_waits_for_its_time():
     assert posts.get(p.id).status == "published"
 
 
+def test_long_missed_schedule_is_not_posted_by_surprise():
+    c = TestClient(app, headers=WEB)
+    p = _ready(when=(now() + timedelta(hours=2)).isoformat())
+    c.post(f"/api/approvals/{_request(p)}/approve")
+    store.update(SocialPost, p.id, {"scheduled_at": now() - timedelta(hours=7)})  # Milo was off
+    assert asyncio.run(instagram.publish_due()) == []
+    got = posts.get(p.id)
+    assert got.status == "failed" and "Missed" in got.error
+    posts.update(p.id, caption="again")  # editable again, can be re-requested
+
+
 # --- live publishing calls (fake Meta) ---
 
 def _publish(p, client):
@@ -289,7 +300,7 @@ def test_story_text_is_drawn_into_the_posted_image():
     plain = Image.open(io.BytesIO(media.vertical_frame(Path(p.images[0]).read_bytes())))
     assert posted.size == (1080, 1920) and posted.tobytes() != plain.tobytes()
     top = posted.crop((90, 150, 990, 260)).convert("L")
-    assert max(top.getdata()) > 230  # white headline pixels in the top band
+    assert top.getextrema()[1] > 230  # white headline pixels in the top band
     a = store.get(Approval, posts.request_publish(p.id)["approval_id"])
     assert 'Text on the image: "Car wash at your doorstep · Delhi NCR · 8 am to 8 pm · DM us to book"' in a.summary
 

@@ -122,7 +122,7 @@ sequenceDiagram
     MCP->>DB: AuditLog "web_research"
     MCP-->>AG: sources marked untrusted (or "unavailable" with no key)
     AG->>LLM: sources as information only
-    LLM-->>AG: 2-3 headline options with "based on" notes + ask for missing details (URL, ages, category)
+    LLM-->>AG: one headline + one primary text with "based on" notes + ask for missing details (URL, ages, category)
     AG-->>UI: SSE "delta" chunks as the reply is written, then "message" - UI lists the sources (reasoning parts are dropped)
     U->>UI: answers
     UI->>API: POST /api/chat
@@ -322,13 +322,15 @@ flowchart TD
 | `app/meta/client.py` | Throttled httpx client: usage headers, backoff, dry-run |
 | `app/meta/campaigns.py` | Builds campaign → ad set → image → creative → ad on Facebook + Instagram (resumes after a half-way failure, finds timed-out creates by unique name); status changes report what already changed; previews |
 | `app/metrics/` | `MetricsProvider` interface: Meta Insights (exact range, paging, closes its client) and simulated (dry run) |
-| `app/jobs/scheduler.py` | APScheduler metrics pull: per-campaign error handling, never wipes data on empty responses |
+| `app/jobs/scheduler.py` | APScheduler: metrics pull + optimizer (15 min, never wipes data on empty responses), stuck-approval recovery, stuck-DM hand-off (2 min), scheduled Instagram posts (1 min), post results (15 min) |
 | `app/db/` | MongoDB: Pydantic models + `store` (sequential ids, `claim()` for atomic approve, audit) |
 | `app/util/redact.py` | Masks tokens and keys in error text shown to the browser |
-| `app/api/` | Routes: chat (SSE), campaigns (+ change requests), approvals, insights (status, summary, audit) |
-| `web/index.html` | The Milo UI: dashboard + chat, campaigns, approvals, analytics, activity, settings (hash routes, calls `/api/*` on the same origin) |
+| `app/api/` | Routes: chat (SSE), campaigns (+ change requests), approvals, insights (status, summary, audit), webhooks (`/webhooks/meta`), inbox, FAQ + leads (+ CSV), knowledge (PDFs), posts (+ public `/media/`), comments, instagram (setup check) |
+| `app/dm/` | DM handling: `agent.py` (the DM assistant: FAQ/PDF answer, lead, hand-off, with time limits), `inbox.py` (reply window, Page token, sending, hold/hand-back), `knowledge.py` (PDF text), `profiles.py` (sender names), `instagram_setup.py` |
+| `app/social/` | Instagram posts: `posts.py` (drafts, checks, approval request), `media.py` (image sizes, Story/Reel text, Reel video), `instagram.py` (Content Publishing API), `insights.py` (results), `comments.py` (post comments: webhook parsing, reply, hide, bot drafts) |
+| `web/index.html` | The Milo UI: intro, dashboard + chat, campaigns, approvals, Inbox (+ FAQ, documents, leads), Posts, analytics, activity, settings (hash routes, calls `/api/*` on the same origin) |
 | `web/milo.css` | Prebuilt Tailwind styles (`web/tailwind.config.js` holds the design tokens) |
-| `tests/` | 110 tests: MCP tools + approvals, image generation (Cloudflare mocked), database indexes, MCP over real stdio, HTTP API, chat event streaming, Meta client, optimizer, Tavily research (respx) |
+| `tests/` | 200+ tests: MCP tools + approvals, DM webhook/bot/Inbox, Instagram DMs and posts, image generation (Cloudflare mocked), database indexes, MCP over real stdio, HTTP API, chat event streaming, Meta client, optimizer, Tavily research (respx) |
 
 ### Process view
 
@@ -400,7 +402,8 @@ erDiagram
     APPROVAL {
         int id PK
         int campaign_id FK
-        string action "publish_campaign, pause_campaign, update_budget"
+        int post_id FK "Instagram post approvals"
+        string action "publish_campaign, pause_campaign, update_budget, publish_post"
         json payload
         string summary
         string reason "why (optimizer numbers)"
@@ -420,6 +423,57 @@ erDiagram
         float cpc
         string source "meta, simulated"
     }
+    SOCIALPOST ||--o{ APPROVAL : "has"
+    SOCIALPOST {
+        int id PK
+        string kind "photo, carousel, reel, story"
+        string caption
+        json overlay "Story/Reel text"
+        list images
+        string media_token "random, public /media/ URL"
+        datetime scheduled_at
+        string status "draft, pending_approval, scheduled, publishing, published, failed"
+        string meta_media_id
+        json insights
+    }
+    INBOUNDMESSAGE {
+        int id PK
+        string mid "unique Meta message id"
+        string platform "messenger, instagram"
+        string page_id
+        string sender_id
+        string text
+        string status "new, read, answered, handed_off; outbound sent, dry_run"
+        json story "Story reply / mention"
+    }
+    COMMENT {
+        int id PK
+        string platform "instagram, facebook"
+        string comment_id "unique Meta comment id"
+        string media_id "post it is on"
+        string from_name
+        string text
+        bool own "the business's own reply"
+        string status "new, read, replied, hidden, removed"
+        list replies
+    }
+    LEAD {
+        int id PK
+        string customer_id
+        string name
+        string phone
+    }
+    CUSTOMERPROFILE {
+        string platform
+        string customer_id
+        string name
+    }
+    KNOWLEDGEDOC {
+        int id PK
+        string filename
+        string sha256
+        list pages "extracted text; the PDF itself is not kept"
+    }
     AUDITLOG {
         int id PK
         string event
@@ -427,6 +481,37 @@ erDiagram
         datetime created_at
     }
 ```
+
+Also: `faq_entries` (question/answer pairs for the DM assistant) and `counters` (sequential ids).
+
+## 8b. DMs and Instagram posts
+
+```mermaid
+flowchart LR
+    M["Messenger / Instagram DM"] -- "signed POST /webhooks/meta" --> W["webhooks.py: check HMAC, store once per mid"]
+    W --> B["dm/agent.py (background, time-limited)"]
+    B -- "FAQ / PDF answer" --> S{"DM_AUTOREPLY?"}
+    S -- "true" --> SEND["inbox.send_reply: reply window, Page token, via the linked Page"]
+    S -- "false" --> D["draft in the Inbox"]
+    B -- "phone number" --> L["Lead"]
+    B -- "anything else / model error" --> H["hand-off: needs a person"]
+    P["Inbox reply by a person"] --> SEND
+    P -- "bot steps back (DM_HANDOFF_HOURS) until Hand back" --> B
+```
+
+- **One webhook, two platforms:** Messenger events arrive as `object: page`, Instagram as `object: instagram`
+  (`entry.id` = Instagram account id). Replies to both go out as the Facebook Page (`POST /{page}/messages`).
+- **Safety:** the bot answers only from the FAQ and uploaded PDFs (PDF-based answers are always drafts for a person
+  to check), has hard
+  time limits (a hung free model becomes a hand-off, not silence), and never uses the `HUMAN_AGENT` tag.
+- **Comments** arrive on the same webhook (`entry[].changes[]`: Instagram `comments`, Page `feed`). They are public,
+  so the bot only drafts (on request) and a person clicks Reply or Hide; the business's own replies coming back are
+  stored as read and not listed.
+- **Posts** follow the same approval gate as ads: `request_post_publish` (agent) or **Request approval** (UI) makes
+  the exact files first (9:16 frames with text, the Reel MP4), then a `publish_post` approval. On Approve,
+  `actions.py` publishes now or marks it *scheduled*; the scheduler publishes at that time (or marks it *missed*
+  if Milo was off for more than 6 h). Instagram downloads the files from `PUBLIC_BASE_URL/media/<token>/<file>`,
+  served only while the post waits to be published.
 
 ## 9. SSE events sent to the UI
 
@@ -471,3 +556,8 @@ The model's private reasoning (`thought` parts) is never sent. Each turn logs `c
 - Only the search query (business + city) is sent to Tavily; no campaign IDs, budgets or keys. `TAVILY_API_KEY`
   stays in `.env`; `/api/status` reports only whether it is set.
 - Draft validation enforces Meta rules before anything is sent (special ad categories must target ages 18–65).
+- **Internet-facing paths:** only `/webhooks/` (every event must carry a valid `X-Hub-Signature-256`) and
+  `GET/HEAD /media/<token>/<file>` (random 32-character token, only files of a post waiting to be published) skip
+  the Host allow-list. Everything under `/api` stays localhost-only.
+- DM text, PDF text and Story replies are **untrusted input** like web research: the DM assistant can only answer,
+  save a lead or hand off; it has no tool that spends, publishes or changes anything.

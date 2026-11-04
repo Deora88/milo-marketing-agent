@@ -1,7 +1,7 @@
 # Milo — Demo walkthrough
 
-A 10-minute script for evaluators. It shows the four things the project is judged on: the **agent harness**,
-the **approval gate**, **analytics** and **optimization**. Everything runs locally and costs nothing.
+A 15-minute script for evaluators. It shows the **agent harness**, the **approval gate**, **analytics**,
+**optimization**, the **DM Inbox and assistant**, and **Instagram posts**. Everything runs locally and costs nothing.
 
 ## 0. Setup (2 min)
 ```bash
@@ -13,7 +13,7 @@ uv run uvicorn app.main:app --reload
 ```
 Defaults are safe: `META_DRY_RUN=true` (no Meta calls, simulated metrics) and `META_ALLOW_SPEND=false`.
 Check **Settings**: the checklist shows the database connection, spend switch, caps and what is configured.
-Tests: `uv run pytest` (110 tests, in-memory MongoDB, no LLM, Meta or Tavily calls).
+Tests: `uv run pytest` (200+ tests, in-memory MongoDB, no LLM, Meta or Tavily calls).
 
 ## 1. Agent harness — plan a campaign in chat (3 min)
 On the **Dashboard**, type:
@@ -23,7 +23,7 @@ On the **Dashboard**, type:
 Watch for:
 - **Tool steps** streaming under the reply ("Researching recent context", "Saving campaign draft"). Tools live in
   the separate **milo-meta MCP server**; every call passes the **tool guard** (allow-list + audit log).
-- **Web research** (if a Tavily key is set): 2–3 headline options, each citing recent sources and dates,
+- **Web research** (if a Tavily key is set): one headline and one primary text, citing recent sources and dates,
   labelled "recent context", never "trends".
 - A **proposal card** once the draft is saved. Nothing has been sent to Meta.
 - Ask Milo to create the picture, or open the campaign and click **✨ Generate image**: Milo uses **FLUX.1 [schnell]**
@@ -54,6 +54,25 @@ Watch for:
 3. Ask Milo "why should I pause this?" — it explains using `list_pending_approvals`.
 4. Nothing is applied until you approve. Cooldowns stop repeat suggestions (6 h; 24 h after a rejection).
 
+## 5. DM Inbox and assistant (3 min)
+Needs the webhook (README: DM webhook) and ngrok; in dry run you can still browse the Inbox and FAQ.
+1. **Inbox → FAQ / Business documents**: add a few FAQs (or **Add sample FAQs**) and upload a PDF price list.
+2. Send the Page a Messenger message (or an Instagram DM) as a tester: it appears in the **Inbox** with the
+   sender's name and id. With `DM_AUTOREPLY=true` Milo answers from the FAQ and PDF; otherwise **Suggest reply**
+   drafts one for you to send.
+3. Reply yourself from the Inbox: the bot steps back for that person (`DM_HANDOFF_HOURS`) until **Hand back**.
+4. Write a phone number in a DM: it shows in the **Leads** card, with **Download CSV** and **Delete**.
+5. Comment on one of the Page's or Instagram account's posts: it appears on **Comments**. Click **Ask the bot for a
+   draft**, edit it, then **Reply** (or **Hide**). The bot never posts a public reply by itself.
+
+## 6. Instagram posts (2 min)
+1. **Posts → New post**: pick Photo, Carousel, Reel or Story; upload images or **Generate with AI**; for Stories
+   and Reels add **Text on image** (headline, details, button) and check the 9:16 preview.
+2. Optional schedule time, then **Request approval**: an approval card shows exactly what will be posted and when.
+   Or ask Milo in chat: "make a Story for our Diwali offer".
+3. Approve: dry run logs it; live mode publishes (needs `PUBLIC_BASE_URL`, the ngrok https address). After
+   publishing, the **Results** panel shows likes, comments, views and reach (refreshed automatically).
+
 ## Live Meta account (Facebook + Instagram)
 Set `META_DRY_RUN=false` with the business account's system-user token, ad account and Page.
 - **Spending stays off** (`META_ALLOW_SPEND=false`): Approve creates the campaign, ad set, image, creative and ad on
@@ -75,6 +94,8 @@ Set `META_DRY_RUN=false` with the business account's system-user token, ad accou
 | Metrics + optimizer | `app/metrics/`, `app/jobs/scheduler.py`, `app/optimizer.py` |
 | Web research | `app/research/tavily.py` |
 | Ad images (FLUX.1 schnell, Cloudflare) | `app/creative/imagegen.py` |
+| DM webhook, Inbox, assistant, leads | `app/api/webhooks.py`, `app/dm/`, `app/api/inbox.py`, `app/api/faq.py` |
+| Instagram posts and results | `app/social/`, `app/api/posts.py` |
 | UI | `web/index.html` |
 
 Diagrams: [ARCHITECTURE.md](ARCHITECTURE.md) · decisions: [TECH_STACK.md](TECH_STACK.md)

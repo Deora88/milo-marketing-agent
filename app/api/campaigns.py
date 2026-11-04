@@ -61,6 +61,17 @@ async def upload_image(campaign_id: int, file: UploadFile):
     data = await file.read(MAX_IMAGE_BYTES + 1)
     if len(data) > MAX_IMAGE_BYTES:
         raise HTTPException(413, "Image is larger than 8 MB.")
+    try:  # the browser's content type is only a claim: check it really is a JPG/PNG
+        from io import BytesIO
+
+        from PIL import Image
+
+        with Image.open(BytesIO(data)) as img:
+            if img.format not in ("JPEG", "PNG"):
+                raise ValueError(img.format)
+            img.verify()
+    except Exception as exc:  # noqa: BLE001 - any decode problem means "not a usable image"
+        raise HTTPException(415, "That file isn't a valid JPG or PNG image.") from exc
     IMAGE_DIR.mkdir(parents=True, exist_ok=True)
     path = IMAGE_DIR / f"campaign-{c.id}{ext}"
     path.write_bytes(data)

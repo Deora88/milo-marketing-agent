@@ -146,6 +146,21 @@ def thread_messages(platform: str, page_id: str, customer_id: str) -> list[Inbou
     return sorted((m for m in rows if _key(m)[2] == customer_id), key=_when)
 
 
+def delete_conversation(platform: str, page_id: str, customer_id: str) -> dict:
+    """Remove everything Milo stored about one person (messages, leads, cached name), e.g. for a data deletion
+    request. Only Milo's copy: the conversation itself stays on Facebook / Instagram."""
+    from app.db.models import CustomerProfile, Lead
+
+    ids = [m.id for m in thread_messages(platform, page_id, customer_id)]
+    d = store.db()
+    gone = d[InboundMessage.collection].delete_many({"_id": {"$in": ids}}).deleted_count if ids else 0
+    leads = d[Lead.collection].delete_many({"platform": platform, "customer_id": customer_id}).deleted_count
+    d[CustomerProfile.collection].delete_many({"platform": platform, "customer_id": customer_id})
+    store.audit("conversation_deleted", platform=platform, page_id=page_id, customer_id=customer_id,
+                messages=gone, leads=leads)  # ids and counts only: no message text kept
+    return {"messages": gone, "leads": leads}
+
+
 def list_conversations() -> list[dict]:
     """One row per (platform, Page, person), newest activity first."""
     groups: dict[tuple, list[InboundMessage]] = {}

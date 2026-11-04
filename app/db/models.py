@@ -77,7 +77,7 @@ class Approval(Doc):
 
 
 class InboundMessage(Doc):
-    """A DM (or postback) delivered by the Meta webhook. Stored first, answered later (DM agent, next step)."""
+    """A DM (or postback) delivered by the Meta webhook. Stored first, then handled by the DM bot (app/dm/agent.py)."""
     collection: ClassVar[str] = "inbound_messages"
     platform: str  # "messenger" | "instagram"
     page_id: str = ""  # the Page / Instagram account that received it (entry.id)
@@ -149,6 +149,32 @@ class SocialPost(Doc):
     source: str = "user"  # user | agent
     created_at: datetime = Field(default_factory=now)
     published_at: Optional[datetime] = None
+    # Results from Instagram (likes, views, reach...): {metric: number}; refreshed by the scheduler
+    insights: dict = Field(default_factory=dict)
+    insights_at: Optional[datetime] = None
+    insights_note: str = ""  # why some numbers are missing (no permission yet, under 5 people, story expired)
+
+
+class Comment(Doc):
+    """A public comment on the business's Instagram post or Facebook Page post, delivered by the webhook.
+    Replies are written by a person in Milo (the bot only drafts); nothing is posted without that click."""
+    collection: ClassVar[str] = "comments"
+    platform: str  # "instagram" | "facebook"
+    account_id: str  # Instagram account id or Page id the comment was made on (webhook entry.id)
+    comment_id: str  # Meta's comment id: unique, used to drop retries
+    media_id: str = ""  # Instagram media id, or the Facebook post id
+    parent_id: str = ""  # set when this comment is itself a reply
+    from_id: str = ""
+    from_name: str = ""  # Facebook name or Instagram username
+    text: str = ""
+    own: bool = False  # written by the business itself (its replies come back through the webhook too)
+    status: str = "new"  # new | read | replied | hidden | removed
+    hidden: bool = False
+    replies: list[dict] = Field(default_factory=list)  # {text, at, mode: live|dry_run, meta_id}
+    suggested_reply: str = ""
+    agent_note: str = ""
+    commented_at: Optional[datetime] = None
+    received_at: datetime = Field(default_factory=now)
 
 
 class KnowledgeDoc(Doc):

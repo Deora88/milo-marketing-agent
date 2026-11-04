@@ -75,6 +75,15 @@ def leads():
     return _lead_rows()
 
 
+@router.delete("/leads/{lead_id}")
+def delete_lead(lead_id: int):
+    if store.get(Lead, lead_id) is None:
+        raise HTTPException(404, "lead not found")
+    store.db()[Lead.collection].delete_one({"_id": lead_id})
+    store.audit("lead_deleted", lead_id=lead_id)
+    return {"deleted": lead_id}
+
+
 def _cell(value) -> str:
     """One CSV cell, safe to open in Excel: a value starting with = + - @ is shown as text, not run as a
     formula (CSV injection). Phone numbers like +919871701615 stay as they are."""

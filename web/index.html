@@ -420,6 +420,18 @@
       <div id="docsRoot" class="card mt-4 p-4"></div>
     </section>
 
+    <section id="view-comments" class="view hidden">
+      <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 class="font-display text-2xl tracking-tight">Comments</h1>
+          <p class="text-sm text-muted">Public comments on your Instagram and Facebook posts. Replies are public and posted only when you click Reply; the bot just drafts them from your FAQ.</p>
+        </div>
+        <button type="button" data-comments-read class="h-10 rounded-lg border border-line px-4 text-sm hover:bg-accent-soft">Mark all read</button>
+      </div>
+      <div id="commentTabs" class="mb-3 flex flex-wrap gap-2"></div>
+      <div id="commentList" class="flex flex-col gap-3"></div>
+    </section>
+
     <section id="view-activity" class="view hidden">
       <div class="mb-4">
         <h1 class="font-display text-2xl tracking-tight">Activity</h1>
@@ -466,6 +478,7 @@
     { id: "campaigns", label: "Campaigns" },
     { id: "approvals", label: "Approvals" },
     { id: "inbox", label: "Inbox" },
+    { id: "comments", label: "Comments" },
     { id: "posts", label: "Posts" },
     { id: "analytics", label: "Analytics" },
     { id: "activity", label: "Activity" },
@@ -476,6 +489,7 @@
     status: null,
     pendingCount: 0,
     unreadDms: 0,
+    unreadComments: 0,
     sessionId: newId(),
     messages: [],
     streaming: false,
@@ -735,6 +749,7 @@
       const s = await api("/api/summary");
       state.pendingCount = s.pending_approvals;
       try { state.unreadDms = (await api("/api/inbox")).reduce((n, c) => n + c.unread, 0); } catch { /* inbox optional */ }
+      try { state.unreadComments = (await api("/api/comments?status=new")).unread; } catch { /* comments optional */ }
       renderNav();
     } catch { /* offline */ }
   }
@@ -743,7 +758,7 @@
     const current = (location.hash.slice(1) || "dashboard").split("/")[0];
     const active = current === "campaign" ? "campaigns" : current;
     const item = (n, cls) => {
-      const n2 = n.id === "approvals" ? state.pendingCount : n.id === "inbox" ? state.unreadDms : 0;
+      const n2 = n.id === "approvals" ? state.pendingCount : n.id === "inbox" ? state.unreadDms : n.id === "comments" ? state.unreadComments : 0;
       const count = n2 ? `<span class="ml-auto grid h-[22px] min-w-[22px] place-items-center rounded-full bg-brand px-1.5 text-[11px] font-bold text-white">${n2}</span>` : "";
       return `<a href="#${n.id}" class="${cls} ${active === n.id ? "bg-surface font-semibold text-ink shadow-soft" : "text-muted hover:bg-surface hover:text-ink"}" ${active === n.id ? 'aria-current="page"' : ""}>${n.label}${count}</a>`;
     };
@@ -1296,6 +1311,12 @@
     action_failed: ["Meta call failed", "text-danger"],
     approval_recovered: ["Stuck approval reset to pending (server stopped mid-change)", "text-warn"],
     dm_received: ["DM received (Messenger / Instagram)", "text-ink"],
+    comment_received: ["Comment received", "text-ink"],
+    comment_replied: ["Comment reply posted", "text-ink"],
+    comment_hidden: ["Comment hidden", "text-warn"],
+    comment_unhidden: ["Comment shown again", "text-ink"],
+    conversation_deleted: ["Conversation deleted from Milo", "text-warn"],
+    lead_deleted: ["Lead deleted", "text-warn"],
     dm_replied: ["DM reply sent", "text-ink"],
     dm_agent_suggested: ["DM bot drafted / sent an answer", "text-ink"],
     dm_handed_off: ["DM handed to a person (not in the FAQ)", "text-warn"],
@@ -1433,7 +1454,8 @@
               <div class="break-all text-[11px] text-muted">${PLATFORM_DM[l.platform] || esc(l.platform)} · ${senderId(l.sender, l.customer_id)} · ${ago(l.created_at)}</div>
               ${l.note ? `<div class="mt-0.5 text-sm text-muted">"${esc(l.note)}"</div>` : ""}
             </div>
-            <a href="#inbox/${key}" class="shrink-0 rounded-lg border border-line px-2 py-1 text-xs hover:bg-accent-soft">Open chat</a>
+            <span class="flex shrink-0 gap-1.5"><a href="#inbox/${key}" class="rounded-lg border border-line px-2 py-1 text-xs hover:bg-accent-soft">Open chat</a>
+              <button type="button" data-lead-del="${l.id}" class="rounded-lg border border-line px-2 py-1 text-xs text-muted hover:border-danger hover:text-danger" aria-label="Delete lead">Delete</button></span>
           </div>`; }).join("") : '<p class="py-3 text-sm text-muted">No leads yet. When someone shares a phone number in a DM, the bot saves it here.</p>'}</div>
         ${rows.length > shown.length ? `<button type="button" data-leads-all class="mt-2 text-xs text-accent hover:underline">Show all ${rows.length}</button>` : ""}`;
     } catch (e) {
@@ -1441,9 +1463,21 @@
     }
   }
   document.body.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-leads-csv],[data-leads-all]");
+    const t = e.target.closest("[data-leads-csv],[data-leads-all],[data-lead-del],[data-convo-del]");
     if (!t) return;
     if (t.matches("[data-leads-all]")) return renderLeads(true);
+    if (t.matches("[data-lead-del]")) {
+      return confirmDialog({ title: "Delete this lead?", body: "The phone number and note are removed from Milo. The conversation stays.", ok: "Delete",
+        onOk: async () => { await api(`/api/leads/${t.dataset.leadDel}`, { method: "DELETE" }); toast("Lead deleted"); renderLeads(); } });
+    }
+    if (t.matches("[data-convo-del]")) {
+      const [platform, page, customer] = t.dataset.convoDel.split("~").map(decodeURIComponent);
+      return confirmDialog({ title: "Delete this conversation?", body: "Milo deletes its copy of these messages, this person's leads and saved name (use this for data deletion requests). The chat itself stays on Facebook / Instagram.", ok: "Delete",
+        onOk: async () => {
+          const r = await api(`/api/inbox/${encodeURIComponent(platform)}/${encodeURIComponent(page)}/${encodeURIComponent(customer)}`, { method: "DELETE" });
+          toast(`Deleted ${r.deleted.messages} message(s) and ${r.deleted.leads} lead(s)`); location.hash = "#inbox"; renderInbox();
+        } });
+    }
     t.disabled = true;
     try {  // fetch with the same headers as every API call (API token, if set), then save the file
       const res = await fetch("/api/leads.csv", { headers: authHeaders() });
@@ -1561,7 +1595,8 @@
           <div class="min-w-0"><div class="font-medium">${esc(senderName(t.sender))}</div>
             <div class="break-all text-xs text-muted"><span class="select-all">${senderId(t.sender, t.customer_id)}</span> · ${PLATFORM_DM[t.platform] || esc(t.platform)} · ${t.messages.length} message(s)</div>
             ${t.sender && !t.sender.name && !t.sender.username && t.sender.lookup_error ? `<div class="text-[11px] text-muted" title="${esc(t.sender.lookup_error)}">Meta didn't share a name for this person.</div>` : ""}</div>
-          ${windowBadge(t.window)}
+          <div class="flex flex-wrap items-center gap-2">${windowBadge(t.window)}
+            <button type="button" data-convo-del="${esc(threadKey(t))}" class="rounded-lg border border-line px-2 py-0.5 text-[11px] text-muted hover:border-danger hover:text-danger" title="Delete Milo's copy of this conversation (for data deletion requests)">Delete</button></div>
         </div>
         <div id="inboxMsgs" class="inbox-thread">${t.messages.map((m) => `
           <div class="bubble ${m.is_echo ? "bubble-out" : "bubble-in"}">${storyLine(m)}${esc(m.text || (m.story && m.story.kind ? "" : m.kind === "postback" ? "(button tap)" : "(attachment or sticker)"))}</div>
@@ -1676,6 +1711,7 @@
             ${check(true, "Spending", s.meta_dry_run ? "Dry run: nothing can spend." : s.spend.allowed ? `ALLOWED (META_ALLOW_SPEND=true). Caps: ${inr(s.spend.max_daily_budget_inr)}/day per campaign, ${inr(s.spend.max_total_daily_budget_inr)}/day in total. Running now: ${inr(s.spend.live_daily_budget_inr)}/day.` : `Off (META_ALLOW_SPEND=false): publishing creates campaigns on Meta but keeps them paused, so nothing is charged. Cap ${inr(s.spend.max_daily_budget_inr)}/day per campaign.`)}
             ${s.image_generation ? check(s.image_generation.configured, "Ad image generation", s.image_generation.configured ? `FLUX.1 [schnell] on Cloudflare Workers AI (${esc(s.image_generation.model)}). Used today: ${s.image_generation.used_today} of ${s.image_generation.daily_limit} (IMAGE_DAILY_LIMIT).` : "Add CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN to .env (free Workers AI account). Without them, upload images yourself.") : ""}
             ${check(s.instagram_account_set || s.meta_dry_run, "Instagram", s.instagram_account_set ? "Instagram account set (META_INSTAGRAM_ACCOUNT_ID)." : "Found automatically from the Page's linked Instagram account at publish time; set META_INSTAGRAM_ACCOUNT_ID to fix it.")}
+            ${s.posts ? check(s.posts.ready, "Instagram posts", s.meta_dry_run ? "Dry run: approved posts are logged, not sent to Instagram." : s.posts.public_base_url_set ? "PUBLIC_BASE_URL is set: Instagram can download post images and Reels from Milo." : "Set PUBLIC_BASE_URL in .env to your ngrok https address: Instagram downloads post images and Reels from there.") : ""}
             ${s.dm ? check(s.dm.webhook_configured, "DM webhook (Inbox)", s.dm.webhook_configured ? `Receiving Messenger / Instagram DMs at /webhooks/meta. ${s.dm.unread} unread. Replies use ${s.dm.page_token_set ? "META_PAGE_ACCESS_TOKEN" : "a Page token fetched with META_ACCESS_TOKEN"}${s.dm.human_agent_enabled ? "; HUMAN_AGENT replies on" : ""}.` : "Add META_APP_SECRET and META_WEBHOOK_VERIFY_TOKEN to .env and connect the webhook in the Meta app (README: DM webhook).") : ""}
             ${check(s.database_ok, "Database (MongoDB)", s.database_ok ? "Connected. Campaigns, approvals, metrics and activity are stored there." : `Not reachable: ${esc(s.database_error)}. Check MONGODB_URI in .env and that your IP is allowed in Atlas (Network Access).`)}
             ${s.research ? check(s.research.enabled && s.research.key_set, "Web research (Tavily)", !s.research.enabled ? "Turned off (RESEARCH_ENABLED=false). Milo writes copy without research." : s.research.key_set ? `Recent context from the past ${esc(s.research.time_range)}, up to ${s.research.max_results} sources per search.` : "Add TAVILY_API_KEY to .env (free: 1,000 credits/month). Without it Milo writes copy unresearched.") : ""}
@@ -1724,6 +1760,23 @@
   // POSTS (organic Instagram: photo, carousel, Reel, Story)
   // =====================================================================
   const POST_MAX = { photo: 1, carousel: 10, reel: 10, story: 1 };
+  const RESULT_LABELS = [["like_count", "Likes"], ["comments_count", "Comments"], ["views", "Views"], ["reach", "Reach"],
+    ["saved", "Saves"], ["shares", "Shares"], ["replies", "Replies"], ["total_interactions", "Interactions"],
+    ["follows", "New followers"], ["profile_visits", "Profile visits"], ["ig_reels_avg_watch_time", "Watch time"]];
+  function resultsPanel(p) {
+    if (p.status !== "published") return "";
+    const r = p.insights || {};
+    const fmt = (k, v) => k === "ig_reels_avg_watch_time" ? `${(v / 1000).toFixed(1)} s` : Number(v).toLocaleString();
+    const tiles = RESULT_LABELS.filter(([k]) => k in r).map(([k, l]) => `<div class="rounded-lg bg-bg px-3 py-2"><div class="text-[11px] text-muted">${l}</div><div class="text-lg font-semibold tabular-nums">${fmt(k, r[k])}</div></div>`).join("");
+    const live = p.meta_mode === "live";
+    return `<div class="mb-3 rounded-lg border border-line p-3">
+      <div class="mb-2 flex flex-wrap items-center justify-between gap-2"><div class="text-sm font-medium">Results on Instagram</div>
+        ${live ? `<button type="button" data-post-insights class="rounded-lg border border-line px-3 py-1 text-xs hover:bg-accent-soft">Refresh</button>` : ""}</div>
+      ${tiles ? `<div class="grid grid-cols-2 gap-2 sm:grid-cols-4">${tiles}</div>` : `<p class="text-sm text-muted">${live ? "No numbers yet. Click Refresh, or wait: Milo checks automatically (Stories every 15 minutes while live, posts hourly for a week)." : "Dry run: this post isn't on Instagram, so there are no results."}</p>`}
+      ${p.insights_note ? `<p class="mt-2 text-xs text-muted">${esc(p.insights_note)}</p>` : ""}
+      ${p.insights_at ? `<p class="mt-1 text-[11px] text-muted">Updated ${ago(p.insights_at)}</p>` : ""}
+    </div>`;
+  }
   const pad2 = (n) => String(n).padStart(2, "0");
   function toLocalInput(iso) {
     if (!iso) return "";
@@ -1798,6 +1851,7 @@
         <div class="min-w-0">
           <div class="mb-3 flex flex-wrap items-center gap-2"><span class="font-display text-lg">${POST_KIND[p.kind]} #${p.id}</span>${badge(POST_STATUS, p.status)}${p.meta_mode === "dry_run" ? '<span class="rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">dry run: not on Instagram</span>' : ""}</div>
           ${p.status === "published" ? `<div class="mb-3 rounded-lg bg-ok/10 p-3 text-sm text-ok">Posted ${ago(p.published_at)}. ${p.permalink ? `<a class="font-medium underline" href="${esc(p.permalink)}" target="_blank" rel="noopener">View on Instagram</a>` : p.meta_mode === "dry_run" ? "Dry run: nothing was sent to Instagram." : ""}</div>` : ""}
+          ${resultsPanel(p)}
           ${p.status === "failed" && p.error ? `<div class="mb-3 rounded-lg bg-danger/5 p-3 text-sm text-danger"><b>Not posted:</b> ${esc(p.error)}<br><span class="text-muted">Fix it if needed, then request publishing again.</span></div>` : ""}
           ${p.status === "scheduled" ? `<div class="mb-3 rounded-lg bg-accent-soft p-3 text-sm text-accent">Approved. Milo posts it on ${whenLabel(p.scheduled_at)} (Milo must be running then).</div>` : ""}
           ${approval ? `<div class="mb-3">${approval}</div>` : ""}
@@ -1870,7 +1924,7 @@
     renderPosts(id);
   });
   document.body.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-post-new],[data-post-kind],[data-post-img-del],[data-post-gen],[data-post-save],[data-post-request],[data-post-del]");
+    const t = e.target.closest("[data-post-new],[data-post-kind],[data-post-img-del],[data-post-gen],[data-post-save],[data-post-request],[data-post-del],[data-post-insights]");
     if (!t) return;
     const id = $("postEditor") && $("postEditor").dataset.postId;
     try {
@@ -1880,7 +1934,11 @@
         return;
       }
       t.disabled = true;
-      if (t.matches("[data-post-kind]")) { await api(`/api/posts/${id}`, { method: "PATCH", body: JSON.stringify({ ...postFields(), kind: t.dataset.postKind }) }); }
+      if (t.matches("[data-post-insights]")) {
+        t.innerHTML = `<span class="inline-flex items-center gap-1">${spinner()} Checking…</span>`;
+        await api(`/api/posts/${id}/insights/refresh`, { method: "POST" });
+        toast("Results updated");
+      } else if (t.matches("[data-post-kind]")) { await api(`/api/posts/${id}`, { method: "PATCH", body: JSON.stringify({ ...postFields(), kind: t.dataset.postKind }) }); }
       else if (t.matches("[data-post-img-del]")) { await api(`/api/posts/${id}/images/${t.dataset.postImgDel}`, { method: "DELETE" }); }
       else if (t.matches("[data-post-gen]")) {
         const prompt = $("postPrompt").value.trim();
@@ -1907,16 +1965,91 @@
   // =====================================================================
   // ROUTER + EVENTS
   // =====================================================================
+  // =====================================================================
+  // COMMENTS: public comments on Instagram / Facebook posts. A person replies or hides; the bot only drafts.
+  // =====================================================================
+  const COMMENT_TABS = [["open", "To answer"], ["replied", "Replied"], ["hidden", "Hidden"], ["", "All"]];
+  const COMMENT_STATUS = { new: ["New", "bg-brand/10 text-brand"], read: ["Read", "bg-bg text-muted"], replied: ["Replied", "bg-ok/10 text-ok"], hidden: ["Hidden", "bg-warn/10 text-warn"], removed: ["Deleted on Meta", "bg-bg text-muted"] };
+  async function renderComments(tab) {
+    const current = COMMENT_TABS.some(([k]) => k === tab) ? tab : (tab === "all" ? "" : "open");
+    $("commentTabs").innerHTML = COMMENT_TABS.map(([k, label]) => `<a href="#comments/${k || "all"}" class="rounded-full border px-3 py-1 text-xs ${k === current ? "border-accent bg-accent-soft text-accent font-medium" : "border-line text-muted hover:bg-accent-soft"}">${label}</a>`).join("");
+    const root = $("commentList");
+    root.innerHTML = skeleton("h-24") + skeleton("h-24");
+    try {
+      const data = await api(`/api/comments${current ? "?status=" + current : ""}`);
+      state.unreadComments = data.unread; renderNav();
+      const dry = state.status?.meta_dry_run;
+      root.innerHTML = data.comments.length ? data.comments.map((c) => {
+        const [label, cls] = COMMENT_STATUS[c.status] || [c.status, "bg-bg text-muted"];
+        const where = c.post ? `<a href="#posts/${c.post.id}" class="text-accent hover:underline">${esc(c.post.kind)} post${c.post.caption ? ": " + esc(c.post.caption) : ""}</a>` : `post ${esc(c.media_id || "?")}`;
+        const open = c.status !== "removed" && !c.own;
+        return `<div class="card p-4" data-comment="${c.id}">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="text-xs text-muted"><span class="font-medium text-ink">${c.platform === "instagram" ? "@" : ""}${esc(c.from_name || "Someone")}</span> · ${c.platform === "instagram" ? "Instagram" : "Facebook"} · on ${where} · ${ago(c.commented_at || c.received_at)}${c.parent_id ? " · reply in a thread" : ""}</div>
+            <span class="rounded-full px-2 py-0.5 text-[11px] font-medium ${c.own ? "bg-bg text-muted" : cls}" ${c.own ? 'title="Written by your own business account, so there is nothing to answer"' : ""}>${c.own ? "Your account" : label}</span>
+          </div>
+          <p class="mt-2 whitespace-pre-wrap text-sm">${esc(c.text) || '<span class="text-muted">(no text: sticker or photo)</span>'}</p>
+          ${c.replies.map((r) => `<div class="mt-2 rounded-lg bg-bg px-3 py-2 text-sm"><div class="text-[11px] text-muted">You replied · ${ago(r.at)}${r.mode === "dry_run" ? " · dry run, not posted" : ""}</div>${esc(r.text)}</div>`).join("")}
+          ${c.agent_note && !c.suggested_reply ? `<div class="mt-2 text-xs text-muted">Bot: ${esc(c.agent_note)}</div>` : ""}
+          ${open ? `<form class="mt-3 flex flex-col gap-2" data-comment-reply="${c.id}">
+            <textarea rows="2" maxlength="2000" class="resize-none rounded-lg border border-line bg-surface px-3 py-2 text-sm" placeholder="Public reply as your business${dry ? " (dry run: saved in Milo only)" : ""}">${esc(c.suggested_reply || "")}</textarea>
+            ${c.suggested_reply ? `<div class="text-[11px] text-muted">Bot draft${c.agent_note ? " · " + esc(c.agent_note) : ""}. Check it: replies are public.</div>` : ""}
+            <div class="flex flex-wrap gap-2">
+              <button type="submit" class="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-accent-fg">Reply</button>
+              <button type="button" data-comment-suggest="${c.id}" class="rounded-lg border border-line px-3 py-1.5 text-xs hover:bg-accent-soft">${c.suggested_reply ? "New draft" : "Ask the bot for a draft"}</button>
+              <button type="button" data-comment-hide="${c.id}" data-hidden="${c.hidden ? "0" : "1"}" class="rounded-lg border border-line px-3 py-1.5 text-xs hover:bg-accent-soft" title="Hidden comments are seen only by the writer and their friends">${c.hidden ? "Show again" : "Hide"}</button>
+            </div></form>` : ""}
+        </div>`; }).join("") : `<div class="card p-6 text-center text-sm text-muted">${current === "open" ? "No comments waiting. New comments on your Instagram and Facebook posts appear here (README: Comments for the webhook setup)." : "Nothing here."}</div>`;
+      const fresh = data.comments.filter((c) => c.status === "new").map((c) => c.id);
+      if (fresh.length) api("/api/comments/read", { method: "POST", body: JSON.stringify({ ids: fresh }) }).then(() => { state.unreadComments = Math.max(0, state.unreadComments - fresh.length); renderNav(); }).catch(() => {});
+    } catch (e) {
+      root.innerHTML = errorBox(e.message, "comments");
+    }
+  }
+  const commentTab = () => (location.hash.split("/")[1] || "open");
+  document.body.addEventListener("click", async (e) => {
+    const t = e.target.closest("[data-comment-suggest],[data-comment-hide],[data-comments-read]");
+    if (!t) return;
+    t.disabled = true;
+    try {
+      if (t.matches("[data-comments-read]")) { await api("/api/comments/read", { method: "POST", body: "{}" }); toast("All comments marked read"); }
+      if (t.matches("[data-comment-suggest]")) {
+        const c = await api(`/api/comments/${t.dataset.commentSuggest}/suggest`, { method: "POST" });
+        if (!c.suggested_reply) toast(c.agent_note || "The bot has no draft for this one", "error");
+      }
+      if (t.matches("[data-comment-hide]")) {
+        const hidden = t.dataset.hidden === "1";
+        await api(`/api/comments/${t.dataset.commentHide}/hide`, { method: "POST", body: JSON.stringify({ hidden }) });
+        toast(hidden ? "Comment hidden" : "Comment shown again");
+      }
+      renderComments(commentTab());
+    } catch (err) { toast(err.message, "error"); t.disabled = false; }
+  });
+  document.body.addEventListener("submit", async (e) => {
+    const f = e.target.closest("[data-comment-reply]");
+    if (!f) return;
+    e.preventDefault();
+    const text = f.querySelector("textarea").value.trim();
+    if (!text) return toast("Write a reply first", "error");
+    const btn = f.querySelector("button[type=submit]");
+    btn.disabled = true;
+    try {
+      await api(`/api/comments/${f.dataset.commentReply}/reply`, { method: "POST", body: JSON.stringify({ text }) });
+      toast(state.status?.meta_dry_run ? "Saved (dry run, not posted)" : "Reply posted");
+      renderComments(commentTab());
+    } catch (err) { toast(err.message, "error"); btn.disabled = false; }
+  });
+
   function route() {
     const [view, arg] = (location.hash.slice(1) || "dashboard").split("/");
-    const known = ["dashboard", "campaigns", "campaign", "approvals", "inbox", "posts", "analytics", "activity", "settings"];
+    const known = ["dashboard", "campaigns", "campaign", "approvals", "inbox", "comments", "posts", "analytics", "activity", "settings"];
     const v = known.includes(view) ? view : "dashboard";
     document.querySelectorAll(".view").forEach((el) => el.classList.add("hidden"));
     $("view-" + v).classList.remove("hidden");
     $("drawer").classList.add("hidden");
     renderNav();
     window.scrollTo(0, 0);
-    ({ dashboard: renderDashboard, campaigns: renderCampaigns, campaign: () => renderCampaign(arg), approvals: renderApprovals, inbox: () => renderInbox(arg), posts: () => renderPosts(arg), analytics: renderAnalytics, activity: renderActivity, settings: renderSettings })[v]();
+    ({ dashboard: renderDashboard, campaigns: renderCampaigns, campaign: () => renderCampaign(arg), approvals: renderApprovals, inbox: () => renderInbox(arg), comments: () => renderComments(arg), posts: () => renderPosts(arg), analytics: renderAnalytics, activity: renderActivity, settings: renderSettings })[v]();
   }
   function refreshCurrent() { route(); }
 

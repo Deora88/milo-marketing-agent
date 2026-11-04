@@ -24,12 +24,14 @@ cp .env.example .env         # MONGODB_URI + OPENROUTER_API_KEY (+ optional TAVI
                              # while META_DRY_RUN=true
 uv run uvicorn app.main:app --reload
 # open http://localhost:8000
-uv run pytest                # 110 tests, in-memory MongoDB; ignores your .env; never calls the LLM, Meta or Tavily
+uv run pytest                # 200+ tests, in-memory MongoDB; ignores your .env; never calls the LLM, Meta or Tavily
 ```
 No `uv`? `pip install uv` first (Windows: `python -m pip install uv`).
 
 **MongoDB Atlas (free):** create an M0 cluster, add a database user, allow your IP under *Network Access*, then copy
 the connection string into `MONGODB_URI`. Settings shows "Database (MongoDB): Connected" when it works.
+`uv run python scripts/check_mongo.py` checks the connection on its own (Milo uses certifi's CA list for Atlas, which
+fixes the TLS handshake errors some Windows PCs get).
 
 **Slow replies?** The default `openrouter/openrouter/free` router picks a random free model, often a slow "thinking"
 one. Pin one fast free model that supports tools in `.env` (`MILO_MODEL=openrouter/<provider>/<model>:free`).
@@ -41,7 +43,7 @@ chat UI → `POST /api/chat` (SSE) → ADK agent `milo` → tool guard (`before_
 `app/actions.py` calls Meta → MongoDB → dashboard.
 
 Before writing ad copy Milo calls `research_topic` (Tavily web search, past month by default) and, if you give a URL,
-`read_landing_page`. It offers 2–3 headline options, each citing the sources and dates it was based on. See
+`read_landing_page`. It writes one headline and one primary text, citing the sources and dates they were based on. See
 [Ad research](#ad-research-web-search).
 
 Every metrics pull also runs the **optimizer**: rule checks on the last 7 days (pause weak campaigns, raise budget on
@@ -76,7 +78,7 @@ app/
 web/
   index.html         the Milo UI (single file, served at /)
   milo.css           prebuilt Tailwind styles; tokens in tailwind.config.js
-tests/               195 tests: MCP tools + approval gate (caps, spend switch, CSRF, double approve, failures), MCP over
+tests/               201 tests: MCP tools + approval gate (caps, spend switch, CSRF, double approve, failures), MCP over
                      stdio, HTTP API, chat streaming, Meta client + campaign builder, previews, optimizer, research, image generation,
                      DM webhook + inbox + bot (in-memory MongoDB via mongomock, HTTP mocked with respx; a personal .env is ignored)
 ```
@@ -147,14 +149,14 @@ Instagram ads need a picture. Milo can create it, or you upload your own (JPG/PN
   `CONVERSATIONS`, placements Facebook + Messenger (Instagram is left out), creative button `MESSAGE_PAGE` and an
   optional welcome message (max 300 characters). Built from Meta's Click to Messenger guide; unit-tested, not yet run
   against the live account.
-- **Who answers:** the Page's own automated replies (Meta Business Suite > Inbox > Automations: instant reply,
-  frequently asked questions, away message). Free, no extra server; Milo doesn't read or send messages.
+- **Who answers:** Milo's Inbox and DM assistant (see [DM bot](#dm-bot-step-3-of-dm-handling)), or the Page's own
+  automated replies in Meta Business Suite if Milo's webhook isn't connected.
 
 ## Ad research (web search)
 When you describe what to promote ("a bakery in Pune"), Milo calls `research_topic` once with the business and
 city. The tool asks Tavily for pages from the past `RESEARCH_TIME_RANGE` (default `month`) and returns up to
-`RESEARCH_MAX_RESULTS` sources: title, URL, published date and a short snippet. Milo then writes 2–3 headline/text
-options, each with a "based on" note. The chat shows the sources under the reply.
+`RESEARCH_MAX_RESULTS` sources: title, URL, published date and a short snippet. Milo then writes one headline and one
+primary text, with a "based on" note. The chat shows the sources under the reply.
 
 - **"Recent context", not "trends":** search results show what is being written about now. They are not search
   volume or trend data, and Milo is told never to call them trends.
@@ -201,13 +203,18 @@ options, each with a "based on" note. The chat shows the sources under the reply
 | GET · PATCH · DELETE | `/api/knowledge/{id}` | Read a PDF's extracted text page by page, turn it on/off for the bot, delete it |
 | POST | `/api/inbox/{platform}/{page_id}/{customer_id}/handback` | Hand the conversation back to the DM bot (earlier hand-offs and Page replies stop counting) |
 | GET · POST | `/api/faq` · PUT/DELETE `/api/faq/{id}` | The bot's FAQ (it answers only from these); `POST /api/faq/sample` loads the sample home-cleaning FAQ |
+| DELETE | `/api/inbox/{platform}/{page_id}/{customer_id}` | Delete Milo's copy of a conversation, the person's leads and saved name (data deletion requests; nothing is deleted on Meta) |
 | GET | `/api/leads` | Contacts captured from DMs (name, phone, conversation) |
+| DELETE | `/api/leads/{id}` | Delete one lead |
 | GET | `/api/leads.csv` | The same leads as a CSV file for Excel (name, phone, platform, sender id, message) |
+| GET | `/api/comments` | Comments on your Instagram / Facebook posts, newest first (`?status=open`, `new`, `replied`, `hidden`) and the unread count |
+| POST | `/api/comments/{id}/reply` · `/hide` · `/suggest` · `/api/comments/read` | Public reply as the business (`{text}`), hide / show (`{hidden}`), bot draft from the FAQ (never posts), mark read |
 | GET | `/api/instagram/check` | Read-only check of the Meta-side setup for Instagram DMs |
 | GET · POST | `/api/posts` | Instagram posts: list, create a draft (`kind`, `caption`, `scheduled_at`) |
 | GET · PATCH · DELETE | `/api/posts/{id}` | One post: read, edit (draft/failed only), delete |
 | POST · DELETE | `/api/posts/{id}/images`, `/generate-image`, `/images/{i}` | Add (upload or AI) / remove images |
 | POST | `/api/posts/{id}/request` | Request approval to publish (formats media, builds the Reel video) |
+| POST | `/api/posts/{id}/insights/refresh` | Fetch a published post's latest results from Instagram (read-only) |
 | GET | `/media/{token}/{file}` | Public, read-only: post media for Meta's downloader |
 | GET | `/api/status` | Model, database check, dry-run, spend switch and caps, Meta, metrics, optimizer, research, image generation (model, used today) — no secrets |
 | GET | `/api/summary` | Dashboard KPIs and daily spend (last 7 days) |
@@ -245,8 +252,8 @@ Approvals requested from Claude Desktop still appear in the Milo dashboard and n
 ## DM webhook (step 1 of DM handling)
 Meta sends every Messenger and Instagram DM to the Page to `POST /webhooks/meta`. Milo checks the signature,
 stores the message in `inbound_messages` (one row per Meta message id, so retries are dropped) and answers 200
-at once. It does not reply yet: the DM agent (FAQ, lead capture, hand-off to a human) is the next step. Design:
-the "Milo Next Milestone: DMs and Client Accounts" write-up on PR #2.
+at once. The [Inbox](#inbox-step-2-of-dm-handling) shows it and the [DM bot](#dm-bot-step-3-of-dm-handling)
+handles it in the background.
 
 - **Security:** `/webhooks/` is the only path that skips the Host allow-list, because Meta calls it from the
   internet. Each event must carry `X-Hub-Signature-256` = HMAC-SHA256 of the raw body with the app secret, checked
@@ -254,8 +261,9 @@ the "Milo Next Milestone: DMs and Client Accounts" write-up on PR #2.
 - **Setup (test with your own account, no App Review needed):**
   1. `.env`: `META_APP_SECRET` and `META_APP_ID` (App Dashboard > App settings > Basic) and
      `META_WEBHOOK_VERIFY_TOKEN` (any long random string you choose).
-  2. Public HTTPS for local Milo, for example `cloudflared tunnel --url http://localhost:8000` (prints an
-     `https://….trycloudflare.com` address). Self-signed certificates are not accepted by Meta.
+  2. Public HTTPS for local Milo: `start-milo.ps1` starts Milo and an ngrok tunnel on the team's fixed ngrok
+     domain (needs ngrok 3.28 or newer; change `$domain` in the script for your own); `cloudflared tunnel --url http://localhost:8000` also works. Put the same
+     address in `PUBLIC_BASE_URL` (Instagram posts need it). Self-signed certificates are not accepted by Meta.
   3. App Dashboard > Messenger (or Webhooks) > Callback URL `https://<tunnel>/webhooks/meta`, Verify token = the
      same string, then subscribe the Page to `messages`, `messaging_postbacks` and `message_echoes`. Without
      `message_echoes`, replies a person types in Business Suite or the Instagram app never reach Milo, and the bot
@@ -276,8 +284,8 @@ go out as the Page through Meta's Send API (`POST /{page_id}/messages`) and are 
   one from the Page with `META_ACCESS_TOKEN`.
 - **Dry run:** with `META_DRY_RUN=true`, replies are saved in the thread (marked "dry run, not sent") and nothing
   is sent to Meta.
-- **Not yet:** automatic replies. The DM agent (FAQ, lead capture, hand-off) is step 3; it will use the same
-  sending code with the same window rules and can never use the human tag.
+- **Automatic replies** come from the [DM bot](#dm-bot-step-3-of-dm-handling): same sending code, same window
+  rules, and it can never use the human tag.
 
 ## Instagram DMs
 Instagram Direct messages work like Messenger ones (Inbox, bot, leads, names), through the **Messenger API for
@@ -317,7 +325,8 @@ the same approval gate as ads: nothing is posted until you click **Approve**.
   SIL Open Font License) and the brand orange. Instagram's API can't add text or stickers, so the text is part
   of the image; the preview shows the exact frame. Emoji are dropped (the font can't draw them).
 - **Scheduling:** optional time (at least 5 minutes, at most 60 days ahead). After approval the post waits as
-  *Scheduled*; the scheduler posts it at that time (Milo must be running).
+  *Scheduled*; the scheduler posts it at that time (Milo must be running). If Milo was off for more than 6 hours
+  past that time, the post is marked *failed* ("Missed") instead of going out late; pick a new time and request again.
 - **Chat:** "Make a Reel about our ceramic coating" → Milo drafts it (`create_instagram_post`) and requests
   approval (`request_post_publish`). It can never post by itself.
 - **How it posts:** Instagram Content Publishing API through the Page token: `POST /{ig-user-id}/media` per item
@@ -329,8 +338,29 @@ the same approval gate as ads: nothing is posted until you click **Approve**.
   marks posts published without contacting Instagram.
 - **Limits:** about 50–100 API posts per 24 hours per account; no music, filters, stickers or shopping tags
   through the API.
+- **Results:** published posts show likes, comments, views, reach, saves, shares and interactions (Reels also
+  average watch time; Stories views, reach, replies, shares, follows, profile visits) with a **Refresh** button.
+  Milo also refreshes them by itself: Stories every 15 minutes while live (Instagram keeps Story numbers for 24
+  hours only), posts and Reels hourly for a week. Likes and comments are plain media fields; the rest needs the
+  `instagram_manage_insights` permission. Instagram doesn't share Story likes, and hides numbers under 5.
 - **Story replies and mentions** arrive as DMs and show in the Inbox as "Replied to your story" or "Mentioned
   you in their story" (with a link while Meta's story link is valid).
+
+## Comments (Instagram and Facebook posts)
+The **Comments** page lists public comments on your Instagram posts and Facebook Page posts (Milo's own posts are
+linked), newest first, with **To answer / Replied / Hidden / All** tabs and an unread count in the sidebar.
+
+- **A person replies, the bot only drafts:** a comment is public, so nothing is posted until you click **Reply**.
+  **Ask the bot for a draft** uses the same FAQ/PDF rules as DMs; if a comment has a phone number, the draft asks
+  the person to DM you and suggests hiding the comment. **Hide** keeps a comment visible only to the writer and their
+  friends (spam, phone numbers). Dry run saves replies in Milo only.
+- **How it works:** the same `/webhooks/meta` receives `entry[].changes[]`: Instagram field `comments`, and Page
+  field `feed` (only `item: comment`; edits, deletes and hides are applied too). Replies go out with the Page token:
+  Instagram `POST /{comment-id}/replies` (under the top comment), Facebook `POST /{comment-id}/comments`; hiding is
+  `POST /{comment-id}` with `hide` (Instagram) or `is_hidden` (Facebook).
+- **Setup:** App Dashboard > Webhooks: subscribe the **Instagram** object to `comments` and the **Page** object to
+  `feed`; add `instagram_manage_comments`, `pages_read_user_content` and `pages_manage_engagement` to the token.
+  Comments from the public need those permissions approved in App Review; testers work before that.
 
 ## DM bot (step 3 of DM handling)
 For every new DM the bot does one of three things, logged in Activity and shown in the Inbox:
@@ -381,6 +411,17 @@ For every new DM the bot does one of three things, logged in Activity and shown 
 - **Settings:** `DM_AGENT_ENABLED` (default true), `DM_AUTOREPLY` (default false), `DM_HANDOFF_HOURS`
   (default 24), `DM_BUSINESS_NAME`. It uses the
   same model as chat (`MILO_MODEL`).
+
+## Troubleshooting
+| What you see | Cause and fix |
+| --- | --- |
+| Chat: `cannot import name 'CacheableResult' from 'mcp.types'` | litellm 1.105+ is installed. Stop Milo, run `uv sync` (the lock pins 1.104). |
+| `uv sync`: "being used by another process" | Milo (or VS Code's Python) still runs from `.venv`. Close it, then `uv sync` again. |
+| Many tests fail with your own settings (`DM_AUTOREPLY=true`...) | Old test setup: `tests/conftest.py` now clears Milo settings and stops litellm loading `.env`. |
+| Bot: `model unavailable (no reply within 30s)` | A slow free model. Try again, or pin one fast free non-reasoning model in `MILO_MODEL`. |
+| Comments page stays empty | Look at the Milo window's `webhook:` line after a new comment. No line or no `changes comments` = Meta isn't sending them: subscribe the Instagram `comments` field, and in Development mode comment from an Instagram Tester account. `from your own account` = it's under **All**. |
+| Reel or Story: "media download failed" | ngrok isn't running or `PUBLIC_BASE_URL` isn't your ngrok https address. |
+| Atlas: TLS / SSL handshake error | Run `uv run python scripts/check_mongo.py`; check `MONGODB_URI` and Atlas Network Access (your IP). |
 
 ## Future work
 - **n8n notifications (optional):** call an n8n webhook to send Telegram/email alerts when an approval is waiting

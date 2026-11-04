@@ -39,6 +39,15 @@ async def thread(platform: str, page_id: str, customer_id: str):
     return data
 
 
+@router.delete("/{platform}/{page_id}/{customer_id}")
+def delete_conversation(platform: str, page_id: str, customer_id: str):
+    """Delete Milo's copy of this conversation, the person's leads and cached name (data deletion requests).
+    Nothing is deleted on Facebook / Instagram."""
+    if not inbox.thread_messages(platform, page_id, customer_id):
+        raise HTTPException(404, "conversation not found")
+    return {"deleted": inbox.delete_conversation(platform, page_id, customer_id)}
+
+
 @router.post("/{platform}/{page_id}/{customer_id}/suggest")
 async def suggest(platform: str, page_id: str, customer_id: str):
     """Ask the DM agent for a draft reply to the person's latest message (never sends)."""
