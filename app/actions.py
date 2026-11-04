@@ -1,7 +1,8 @@
 """Write actions that change live ads. Only ever run AFTER a human approves them.
 
 The agent (through the MCP server's request_* tools) can only create an Approval row. This module executes it
-when the user clicks Approve. Nothing else in the codebase calls Meta write endpoints.
+when the user clicks Approve. Nothing else in the codebase calls Meta write endpoints, except publishing an
+Instagram post whose approval was given for a later time (app/social/instagram.py, run by the scheduler).
 
 Spend safety: with META_ALLOW_SPEND=false (default) a publish creates everything on Meta but leaves it PAUSED,
 so nothing delivers and nothing is charged.
@@ -64,7 +65,32 @@ def _forget_dry_run_ids(c: Campaign, live: bool) -> None:
         c.meta_mode = ""
 
 
+async def execute_post(approval: Approval, client: MetaClient | None = None):
+    """Approved Instagram post: publish now, or keep it for the scheduler if it has a future time."""
+    from app.db.models import SocialPost, now
+    from app.social import instagram
+
+    p = store.get(SocialPost, approval.post_id)
+    if p is None:
+        raise ValueError("post not found")
+    if p.scheduled_at and p.scheduled_at > now():
+        p = store.claim(SocialPost, p.id, {"status": "pending_approval"}, {"status": "scheduled", "error": ""}) or p
+        store.audit("action_executed", approval_id=approval.id, action=approval.action, post_id=p.id,
+                    post_status="scheduled")
+        return p
+    try:
+        p = await instagram.publish(p.id, client)
+    except Exception:  # failed while approving: back to waiting, so the user can approve again (retry)
+        store.claim(SocialPost, approval.post_id, {"status": "failed"}, {"status": "pending_approval"})
+        raise
+    store.audit("action_executed", approval_id=approval.id, action=approval.action, post_id=p.id,
+                post_status=p.status, mode=p.meta_mode)
+    return p
+
+
 async def execute(approval: Approval, client: MetaClient | None = None) -> Campaign:
+    if approval.action == "publish_post":
+        return await execute_post(approval, client)
     client = client or MetaClient()
     s = client.s
     live = not s.meta_dry_run

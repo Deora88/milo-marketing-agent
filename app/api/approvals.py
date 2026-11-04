@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 
 from app import actions
 from app.db import store
-from app.db.models import Approval, Campaign, now
+from app.db.models import Approval, Campaign, SocialPost, now
 from app.util.redact import redact
 
 router = APIRouter(prefix="/api/approvals", tags=["approvals"])
@@ -13,7 +13,9 @@ def list_approvals(status: str = "pending"):
     """status = pending | approved | rejected | executing | all. Each row includes the campaign name."""
     rows = store.find(Approval, {} if status == "all" else {"status": status}, sort=[("_id", -1)])
     names = {c.id: c.name for c in store.find(Campaign, {"_id": {"$in": list({a.campaign_id for a in rows})}})}
-    return [a.model_dump() | {"campaign_name": names.get(a.campaign_id, "")} for a in rows]
+    kinds = {p.id: p.kind for p in store.find(SocialPost, {"_id": {"$in": [a.post_id for a in rows if a.post_id]}})}
+    return [a.model_dump() | {"campaign_name": names.get(a.campaign_id, ""), "post_kind": kinds.get(a.post_id, "")}
+            for a in rows]
 
 
 def _claim(approval_id: int, new_status: str) -> Approval:
@@ -41,6 +43,8 @@ async def approve(approval_id: int):
     # If recovery already put a slow run back to pending, the change still happened on Meta: record it as approved.
     a = (store.claim(Approval, a.id, {"status": "executing"}, done)
          or store.claim(Approval, a.id, {"status": "pending"}, done) or a)
+    if a.action == "publish_post":
+        return {"approval": a, "post": campaign}
     return {"approval": a, "campaign": campaign}
 
 
@@ -49,7 +53,9 @@ def reject(approval_id: int):
     a = _claim(approval_id, "rejected")
     a.decided_at = now()
     store.save(a)
-    c = store.get(Campaign, a.campaign_id)
+    if a.action == "publish_post" and a.post_id:
+        store.claim(SocialPost, a.post_id, {"status": "pending_approval"}, {"status": "draft"})
+    c = store.get(Campaign, a.campaign_id) if a.campaign_id else None
     if a.action == "publish_campaign" and c and c.status == "pending_approval":
         c.status = "draft"
         store.save(c)

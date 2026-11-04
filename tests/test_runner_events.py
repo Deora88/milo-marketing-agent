@@ -31,3 +31,10 @@ async def test_thoughts_hidden_and_text_streamed(monkeypatch):
     assert [e["type"] for e in out] == ["delta", "delta", "message"]
     assert all("greet" not in e.get("text", "") and "user said" not in e.get("text", "") for e in out)
     assert out[-1]["text"] == "Hi! I'm Milo."
+
+
+def test_milo_writes_one_ad_copy_version_unless_asked():
+    from app.agent.prompts import MILO_INSTRUCTION
+
+    assert "ONE headline and ONE primary text" in MILO_INSTRUCTION
+    assert "2-3 headline" not in MILO_INSTRUCTION

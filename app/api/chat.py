@@ -1,7 +1,7 @@
 import json
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from app.agent.runner import chat_turn
@@ -11,8 +11,8 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
 class ChatIn(BaseModel):
-    session_id: str
-    message: str
+    session_id: str = Field(min_length=1, max_length=100)
+    message: str = Field(min_length=1, max_length=8000)
 
 
 @router.post("")

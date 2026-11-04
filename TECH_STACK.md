@@ -1,7 +1,8 @@
 # Milo — Tech Stack
 
 Milo is a conversational AI agent that creates, approves, publishes and monitors **Meta (Facebook + Instagram)** ad
-campaigns on a **live Meta business ad account**. The software stack is free: free LLM models, MongoDB Atlas free tier,
+campaigns on a **live Meta business ad account**, answers Messenger and Instagram DMs, and publishes Instagram posts
+(after approval). The software stack is free: free LLM models, MongoDB Atlas free tier,
 and spending on Meta is **off by default** (campaigns are created paused until the account owner enables spend).
 
 ## At a glance
@@ -9,9 +10,9 @@ and spending on Meta is **off by default** (campaigns are created paused until t
 | Layer | Technology | Version | Why we chose it |
 | --- | --- | --- | --- |
 | Language | Python | 3.12+ | One language across agent, API and jobs; the Meta Ads CLI also needs 3.12+ |
-| Agent framework | Google ADK (`google-adk`) | ≥ 1.0 (tested on 2.11) | `McpToolset` loads MCP tools; `before_tool_callback` = tool guard; built-in sessions and runner |
+| Agent framework | Google ADK (`google-adk`) | ≥ 1.0 (tested on 2.13) | `McpToolset` loads MCP tools; `before_tool_callback` = tool guard; built-in sessions and runner |
 | Tool protocol | Model Context Protocol — `mcp` Python SDK (FastMCP) | 1.x (tested on 1.30) | Meta tools live in a separate `milo-meta` MCP server over stdio; reusable from Claude Desktop / VS Code |
-| LLM gateway | LiteLLM | ≥ 1.50 | Lets ADK talk to any provider; changing models is one `.env` line |
+| LLM gateway | LiteLLM | 1.50 – 1.104 (tested on 1.104.8) | Lets ADK talk to any provider; changing models is one `.env` line. Pinned below 1.105, which needs the `mcp` 2.x SDK (`tests/test_llm_compat.py` checks the real call path) |
 | LLM provider | OpenRouter free models | `openrouter/openrouter/free` (default) | No cost; can pin a specific tool-capable `:free` model via `MILO_MODEL` |
 | Backend API | FastAPI + Pydantic | ≥ 0.115 | Async, typed, auto-docs at `/docs`; serves the dashboard too |
 | Server | Uvicorn | ≥ 0.30 | ASGI server for FastAPI |
@@ -24,8 +25,13 @@ and spending on Meta is **off by default** (campaigns are created paused until t
 | Ad image generation | **FLUX.1 [schnell]** (Black Forest Labs) on **Cloudflare Workers AI**, model id `@cf/black-forest-labs/flux-1-schnell` | REST, 4 steps, 1024×1024 | Free daily allowance (10,000 neurons ≈ 150+ images), fast, Apache-2.0 licence allows ad use; called with httpx and mocked with respx in tests |
 | Ad research | Tavily Search + Extract API (via httpx) | REST | Recent web context for ad copy (`time_range`, published dates), built for LLM agents; free 1,000 credits/month; optional |
 | Config & secrets | pydantic-settings + `.env` | ≥ 2.4 | Typed settings; secrets never reach the browser |
-| Frontend | Single-file HTML + vanilla JS, Tailwind CSS (prebuilt `web/milo.css`), hand-drawn SVG charts | Tailwind 3 (build only) | Served by FastAPI at `/` — same origin as the API, so no CORS, no hosting, no Node at runtime. Design: warm paper palette, Fraunces + Outfit |
-| Testing | pytest + pytest-asyncio + respx + mongomock | — | 85 tests: MCP tools, approval gate (incl. CSRF, double approve, failures), HTTP API, chat streaming, optimizer, Meta, Tavily and Cloudflare image clients, without calling the LLM, Meta, Tavily, Cloudflare or a real database |
+| Frontend | Single-file HTML + vanilla JS, Tailwind CSS (prebuilt `web/milo.css`), hand-drawn SVG charts | Tailwind 3 (build only) | Served by FastAPI at `/` — same origin as the API, so no CORS, no hosting, no Node at runtime. Design: orange theme, sidebar navigation, Plus Jakarta Sans |
+| Testing | pytest + pytest-asyncio + respx + mongomock | — | 200+ tests: MCP tools, approval gate (incl. CSRF, double approve, failures), HTTP API, chat streaming, optimizer, Meta, Tavily and Cloudflare image clients, DM webhook/bot/Inbox, Instagram DMs and posts, without calling the LLM, Meta, Tavily, Cloudflare or a real database |
+| DMs | Meta Messenger Platform + Messenger API for Instagram (webhook `/webhooks/meta`, Send API via the Page) | Graph v26.0 | One webhook and one Page token for Messenger and Instagram DMs; signed events (HMAC-SHA256) |
+| Instagram posts | Instagram Content Publishing API + media insights (Facebook Login path, Page token) | Graph v26.0 | Photo, carousel, Reel and Story through the same Page token; results read back for the Results panel |
+| Images and video | Pillow, `imageio-ffmpeg` (bundled ffmpeg), Plus Jakarta Sans fonts (OFL) | — | Resizes images to Instagram's sizes, draws Story/Reel text, makes the Reel MP4 without a system ffmpeg |
+| PDF knowledge | pypdf | ≥ 6.21.4 | Reads uploaded price lists / brochures so the DM assistant can answer from them |
+| Public tunnel | ngrok (`start-milo.ps1`) | ≥ 3.28 | Meta must reach the webhook and download post media over https |
 | Packaging | uv | — | Fast installs and a lockfile (`uv.lock`) for reproducible setup |
 
 ## Key decisions
@@ -151,7 +157,7 @@ workflows and add another service to run. It is listed as optional future work f
 | `OPENROUTER_API_KEY` | — | OpenRouter key (required for chat) |
 | `MILO_MODEL` | `openrouter/openrouter/free` | LiteLLM model string |
 | `META_API_VERSION` | `v26.0` | Pinned Graph API version |
-| `META_ACCESS_TOKEN` | — | Business system-user token: `ads_management`, `ads_read`, `pages_read_engagement`, `pages_show_list`, `instagram_basic`, `business_management` |
+| `META_ACCESS_TOKEN` | — | Business system-user token: `ads_management`, `ads_read`, `pages_read_engagement`, `pages_show_list`, `instagram_basic`, `business_management`; for DMs `pages_messaging`, `instagram_manage_messages`; for posts `instagram_content_publish` (+ `instagram_manage_insights` for results); for comments `instagram_manage_comments`, `pages_read_user_content`, `pages_manage_engagement` |
 | `META_AD_ACCOUNT_ID` | — | Ad account id (digits; an `act_` prefix is also accepted) |
 | `META_PAGE_ID` | — | Facebook Page the ads run under |
 | `META_INSTAGRAM_ACCOUNT_ID` | auto | Instagram account linked to the Page (found from the Page if empty) |
@@ -178,6 +184,15 @@ workflows and add another service to run. It is listed as optional future work f
 | `RESEARCH_ENABLED` | `true` | Turn web research on/off |
 | `RESEARCH_TIME_RANGE` | `month` | How recent results must be: `day`, `week`, `month`, `year` |
 | `RESEARCH_MAX_RESULTS` | `5` | Sources per search |
+| `META_APP_SECRET`, `META_APP_ID` | — | Check webhook signatures; tell Milo's own echoes apart |
+| `META_WEBHOOK_VERIFY_TOKEN` | — | Random string typed in the App Dashboard when connecting the webhook |
+| `META_PAGE_ACCESS_TOKEN` | — | Optional Page token for replies and posts (else fetched with `META_ACCESS_TOKEN`) |
+| `META_HUMAN_AGENT_ENABLED` | `false` | Late replies with the `HUMAN_AGENT` tag, only after Meta approves it |
+| `DM_AGENT_ENABLED` / `DM_AUTOREPLY` | `true` / `false` | DM assistant on; sends replies itself only when `DM_AUTOREPLY=true` (else drafts) |
+| `DM_HANDOFF_HOURS` | `24` | After a hand-off or a person's reply, the bot stays out of that conversation this long |
+| `DM_BUSINESS_NAME` | — | Business name the DM assistant uses in replies |
+| `PUBLIC_BASE_URL` | — | Public https address (ngrok); Instagram downloads post media from it |
+| `APPROVAL_TIMEOUT_MINUTES` | `10` | An approval stuck "executing" this long goes back to pending |
 | `CORS_ORIGIN_REGEX` | `http://(localhost\|127.0.0.1)(:port)?` | Extra browser origins allowed to call the API (only for a separate local dev server) |
 
 ## Platform limits we design around
@@ -190,4 +205,6 @@ workflows and add another service to run. It is listed as optional future work f
 | Meta ad set budget changes | 4 per hour per ad set | Budget changes go through approval; the optimizer recommends at most one change per campaign per 6 h |
 | Live ad account spend | Real money once ads deliver | `META_ALLOW_SPEND=false` by default (everything paused) + per-campaign and total daily caps |
 | Cloudflare Workers AI free plan | 10,000 neurons/day (FLUX.1 [schnell] ≈ 58 per image) | `IMAGE_DAILY_LIMIT` (default 40/day); clear message when the allowance is used up; upload always works |
+| Meta reply window | 24 h after the person's last message (7 days with `HUMAN_AGENT`) | Milo refuses to send outside the window and the Inbox says why |
+| Instagram API publishing | about 50–100 posts per 24 h per account | Every post goes through approval; no bulk posting |
 | Tavily free plan | 1,000 credits/month | One basic search (1 credit) per campaign idea; research is optional and each call is logged |

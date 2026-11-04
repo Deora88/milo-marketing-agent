@@ -29,6 +29,23 @@ def _image_status(s, db_ok: bool) -> dict:
             "daily_limit": s.image_daily_limit, "used_today": used_today() if db_ok else 0}
 
 
+def _dm_status(s, db_ok: bool) -> dict:
+    from app.db import store
+    from app.db.models import FaqEntry, InboundMessage
+
+    return {"webhook_configured": bool(s.meta_app_secret and s.meta_webhook_verify_token),
+            "agent_enabled": s.dm_agent_enabled, "autoreply": s.dm_autoreply, "business_name": s.dm_business_name,
+            "faq_count": store.count(FaqEntry, {"enabled": True}) if db_ok else 0,
+            "page_token_set": bool(s.meta_page_access_token), "human_agent_enabled": s.meta_human_agent_enabled,
+            "unread": store.count(InboundMessage, {"is_echo": False, "status": "new"}) if db_ok else 0}
+
+
+def _comments_unread(db_ok: bool) -> int:
+    from app.social import comments
+
+    return comments.unread() if db_ok else 0
+
+
 @router.get("/status")
 def status():
     s = get_settings()
@@ -45,6 +62,11 @@ def status():
         "meta_page_name": s.meta_page_name,
         "meta_configured": bool(s.meta_access_token and s.meta_ad_account_id and s.meta_page_id),
         "instagram_account_set": bool(s.meta_instagram_account_id),
+        "comments_unread": _comments_unread(db_state["ok"]),
+        "posts": {  # Instagram posts: Meta downloads the media from PUBLIC_BASE_URL
+            "public_base_url_set": s.public_base_url.startswith("https://"),
+            "ready": s.meta_dry_run or s.public_base_url.startswith("https://"),
+        },
         "spend": {
             "allowed": s.meta_allow_spend,
             "max_daily_budget_inr": s.max_daily_budget_inr,
@@ -53,6 +75,7 @@ def status():
         },
         "api_token_required": bool(s.api_token),
         "image_generation": _image_status(s, db_state["ok"]),
+        "dm": _dm_status(s, db_state["ok"]),
         "metrics_provider": effective_provider(),
         "metrics_poll_minutes": s.metrics_poll_minutes,
         "research": {

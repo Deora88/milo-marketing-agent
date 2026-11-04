@@ -59,12 +59,13 @@ class MetaClient:
         raw = self.s.meta_ad_account_id.strip().removeprefix("act_")
         return f"act_{raw}"
 
-    async def request(self, method: str, path: str, *, params: dict | None = None, data: dict | None = None, retries: int = 4) -> dict[str, Any]:
+    async def request(self, method: str, path: str, *, params: dict | None = None, data: dict | None = None,
+                      retries: int = 4, token: str | None = None) -> dict[str, Any]:
         if self.s.meta_dry_run:
             log.info("[dry-run] %s %s %s", method, path, data or params)
             return {"id": f"dry_{uuid.uuid4().hex[:10]}", "success": True, "data": []}
 
-        headers = {"Authorization": f"Bearer {self.s.meta_access_token}"}
+        headers = {"Authorization": f"Bearer {token or self.s.meta_access_token}"}  # token: e.g. a Page token
         enc = lambda d: {k: json.dumps(v) if isinstance(v, (dict, list)) else v for k, v in (d or {}).items()}  # noqa: E731
         body, params = enc(data), enc(params) or None
         delay = 2.0
@@ -96,11 +97,11 @@ class MetaClient:
             raise MetaAPIError(code, sub, msg)
         raise MetaAPIError(0, None, "retries exhausted")
 
-    async def get(self, path: str, **params) -> dict:
-        return await self.request("GET", path, params=params)
+    async def get(self, path: str, token: str | None = None, **params) -> dict:
+        return await self.request("GET", path, params=params, token=token)
 
-    async def post(self, path: str, **data) -> dict:
-        return await self.request("POST", path, data=data)
+    async def post(self, path: str, token: str | None = None, **data) -> dict:
+        return await self.request("POST", path, data=data, token=token)
 
     async def aclose(self) -> None:
         await self._http.aclose()
