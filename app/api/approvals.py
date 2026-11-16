@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
 from app import actions
+from app.actor import current_actor
 from app.db import store
 from app.db.models import Approval, Campaign, SocialPost, now
 from app.util.redact import redact
@@ -20,7 +21,8 @@ def list_approvals(status: str = "pending"):
 
 def _claim(approval_id: int, new_status: str) -> Approval:
     """Atomically move pending -> new_status. A second click, a retry or a concurrent reject gets 409."""
-    changes = {"status": new_status, "executing_since": now() if new_status == "executing" else None}
+    changes = {"status": new_status, "executing_since": now() if new_status == "executing" else None,
+               "decided_by": current_actor()}
     a = store.claim(Approval, approval_id, {"status": "pending"}, changes)
     if a is None:
         current = store.get(Approval, approval_id)
@@ -36,7 +38,8 @@ async def approve(approval_id: int):
     try:
         campaign = await actions.execute(a)
     except Exception as exc:  # noqa: BLE001 - any failure: record it and let the user retry
-        store.claim(Approval, a.id, {"status": "executing"}, {"status": "pending", "executing_since": None})
+        store.claim(Approval, a.id, {"status": "executing"},
+                    {"status": "pending", "executing_since": None, "decided_by": ""})
         store.audit("action_failed", approval_id=a.id, error=redact(exc))
         raise HTTPException(502, f"Meta call failed: {redact(exc)}") from exc
     done = {"status": "approved", "decided_at": now(), "executing_since": None}

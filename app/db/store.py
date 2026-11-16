@@ -9,8 +9,10 @@ from pymongo import ASCENDING, MongoClient, ReturnDocument
 from pymongo.database import Database
 
 from app.config import get_settings
+from app.actor import current_actor
 from app.db.models import (Approval, AuditLog, Campaign, CampaignVersion, Comment, Competitor, CustomerProfile, Doc,
-                           HashtagSearch, InboundMessage, KnowledgeDoc, Lead, MetricSnapshot, SocialPost)
+                           HashtagSearch, InboundMessage, KnowledgeDoc, Lead, MetricSnapshot, Session, SocialPost,
+                           User)
 
 T = TypeVar("T", bound=Doc)
 
@@ -53,6 +55,9 @@ def init_db() -> None:
     d[HashtagSearch.collection].create_index([("tag", ASCENDING)], unique=True)
     d[CampaignVersion.collection].create_index([("campaign_id", ASCENDING), ("version", ASCENDING)], unique=True)
     d[AuditLog.collection].create_index([("event", ASCENDING), ("created_at", ASCENDING)])
+    d[User.collection].create_index([("email", ASCENDING)], unique=True)
+    d[Session.collection].create_index([("sid_hash", ASCENDING)], unique=True)
+    d[Session.collection].create_index([("expires_at", ASCENDING)], expireAfterSeconds=0)  # MongoDB deletes old ones
 
 
 def next_id(collection: str) -> int:
@@ -118,4 +123,7 @@ def update(cls: type[T], id_: int, changes: dict) -> T | None:
 
 
 def audit(event: str, **detail) -> None:
+    by = current_actor()  # the signed-in person, when the change comes from a browser request
+    if by and "by" not in detail:
+        detail["by"] = by
     insert(AuditLog(event=event, detail=detail))

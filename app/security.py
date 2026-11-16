@@ -21,17 +21,28 @@ A path with "." / ".." segments or a doubled slash is never treated as one of th
 5. Every response carries X-Frame-Options: DENY and CSP frame-ancestors 'none', so another website cannot load
    the dashboard in a hidden frame and trick a click on Approve (clickjacking; the X-Milo-Client header does not
    stop that, because the framed dashboard sends its own requests), plus nosniff and a strict referrer policy.
+
+6. Sign-in and roles (AUTH_REQUIRED=true, app/auth.py): /api needs a signed-in session, and approving,
+   rejecting and user management need the admin role. Checked here, on the server, for every request.
 """
 import hmac
+import re
 
 from fastapi import Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
+from app.actor import set_actor
 from app.config import get_settings
 
 CLIENT_HEADER = "x-milo-client"
 UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
 
+
+# Sign-in (AUTH_REQUIRED=true): every /api route needs a session except these, and the ADMIN_ONLY ones need the
+# admin role. Kept in one place on purpose: a new route is protected by default, and the rules are easy to audit.
+OPEN_PATHS = {"/api/health", "/api/auth/state", "/api/auth/login", "/api/auth/setup", "/api/auth/logout"}
+ADMIN_ONLY = [re.compile(r"/api/approvals/\d+/(approve|reject)/?"), re.compile(r"/api/auth/users(/.*)?")]
 
 PROXY_HEADERS = ("x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "forwarded", "x-real-ip")
 WEBHOOK_PREFIX = "/webhooks/"
@@ -52,6 +63,7 @@ def _plain(path: str) -> bool:
 
 
 async def guard_requests(request: Request, call_next):
+    set_actor("")  # never inherit the previous request's user (requests on one connection share a context)
     response = await _guard(request, call_next)
     for name, value in SECURITY_HEADERS.items():
         response.headers.setdefault(name, value)
@@ -82,4 +94,14 @@ async def _guard(request: Request, call_next):
                 return JSONResponse({"detail": "Missing or wrong API token."}, status_code=401)
         if request.method in UNSAFE and not request.headers.get(CLIENT_HEADER):
             return JSONResponse({"detail": "Missing X-Milo-Client header."}, status_code=403)
+        if s.auth_required and path not in OPEN_PATHS:
+            from app import auth  # imported here: app.auth needs the database layer, this module does not
+
+            user = await run_in_threadpool(auth.user_for, request.cookies.get(auth.COOKIE, ""))
+            if user is None:  # "auth": "login" tells the UI to show the sign-in page (not the API_TOKEN prompt)
+                return JSONResponse({"detail": "Please sign in.", "auth": "login"}, status_code=401)
+            if user.role != "admin" and any(rule.fullmatch(path) for rule in ADMIN_ONLY):
+                return JSONResponse({"detail": "Only an admin can do this."}, status_code=403)
+            set_actor(user.email)
+            request.state.user = user
     return await call_next(request)

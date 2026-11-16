@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.config import get_settings
+from app.actor import current_actor
 from app.db import store
 from app.db.models import Approval, SocialPost, now
 from app.social import media
@@ -222,7 +223,8 @@ def request_publish(post_id: int, source: str = "user") -> dict:
         p = prepare_media(p)
     except media.MediaError as exc:
         raise PostError(str(exc)) from exc
-    a = store.insert(Approval(action="publish_post", post_id=p.id, summary=describe(p), source=source))
+    a = store.insert(Approval(action="publish_post", post_id=p.id, summary=describe(p), source=source,
+                              requested_by=current_actor()))
     store.update(SocialPost, p.id, {"status": "pending_approval", "error": ""})
     store.audit("approval_requested", approval_id=a.id, action="publish_post", post_id=p.id, source=source)
     return {"status": "pending_approval", "approval_id": a.id, "summary": a.summary,

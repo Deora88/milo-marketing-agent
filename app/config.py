@@ -113,6 +113,11 @@ class Settings(BaseSettings):
     # and the Host must be in allowed_hosts (blocks DNS rebinding). Set api_token if Milo runs beyond localhost.
     api_token: str = ""
     allowed_hosts: str = "localhost,127.0.0.1"
+    # Sign-in (app/auth.py). true: everyone signs in with email + password; only an admin may approve, reject and
+    # manage users. On first run the sign-in page lets you create the first admin (from this computer only).
+    # false: no sign-in, as before (one person on their own computer).
+    auth_required: bool = True
+    session_hours: int = 12  # a sign-in lasts this long
 
     # App
     # Browser origins allowed to call the API besides the app's own origin (local dev servers only).

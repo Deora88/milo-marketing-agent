@@ -528,3 +528,20 @@ For every new DM the bot does one of three things, logged in Activity and shown 
 ## Future work
 - **n8n notifications (optional):** call an n8n webhook to send Telegram/email alerts when an approval is waiting
   or a campaign's CPC spikes. Kept out of the core so the agent harness stays in code.
+
+## Sign-in and roles
+
+With `AUTH_REQUIRED=true` (the default) Milo asks everyone to sign in.
+
+- **First start:** open `http://localhost:8000` and create the first admin. This works only from the computer
+  Milo runs on, and only while no user exists.
+- **Roles:** an **editor** can chat with Milo, edit drafts, reply to DMs and comments, manage the FAQ and PDFs,
+  and *request* a change. Only an **admin** can approve or reject, and add or change users. The server checks
+  the role on every request (`app/security.py`); the UI hiding a button is only cosmetic.
+- **Who did it:** approvals show "Requested by" and "Approved / Rejected by", and Activity rows carry `by`.
+- **Add a user:** `uv run python scripts/add_user.py someone@example.com --role editor --name "Priya"`
+  (or `POST /api/auth/users` as an admin). `--reset-password` changes a password and signs that person out.
+- **How it is stored:** passwords as salted scrypt hashes; a session is a random id in an `HttpOnly`,
+  `SameSite=Strict` cookie, and only its SHA-256 is saved. Five wrong tries lock sign-in for 15 minutes.
+- **Limits of this version:** two roles, no Users page yet, and requests made by the chat agent are recorded
+  as "agent", not with the name of the person chatting. Set `AUTH_REQUIRED=false` for the old single-user mode.

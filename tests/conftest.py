@@ -20,6 +20,7 @@ os.environ["META_DRY_RUN"] = "true"
 os.environ["META_ALLOW_SPEND"] = "false"
 os.environ["ALLOWED_HOSTS"] = "testserver,localhost,127.0.0.1"
 os.environ["DM_AGENT_ENABLED"] = "false"  # tests call the DM agent directly with a fake model
+os.environ["AUTH_REQUIRED"] = "false"  # sign-in has its own tests (tests/test_auth.py), which turn it on
 
 import pytest  # noqa: E402
 

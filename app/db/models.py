@@ -89,6 +89,30 @@ class Approval(Doc):
     created_at: datetime = Field(default_factory=now)
     decided_at: Optional[datetime] = None
     executing_since: Optional[datetime] = None  # set while Approve runs; lets a crashed run be recovered
+    requested_by: str = ""  # email of the signed-in person who asked ("" = the agent, the optimizer, or sign-in off)
+    decided_by: str = ""  # email of the admin who approved or rejected
+
+
+class User(Doc):
+    """Someone who may sign in (app/auth.py). The password is stored only as a salted scrypt hash."""
+    collection: ClassVar[str] = "users"
+    email: str
+    name: str = ""
+    role: str = "editor"  # editor | admin (only an admin may approve, reject and manage users)
+    salt: str = ""
+    password_hash: str = ""
+    disabled: bool = False
+    created_at: datetime = Field(default_factory=now)
+    last_login_at: Optional[datetime] = None
+
+
+class Session(Doc):
+    """A signed-in browser. Only the SHA-256 of the cookie value is kept."""
+    collection: ClassVar[str] = "sessions"
+    sid_hash: str
+    user_id: int
+    expires_at: datetime
+    created_at: datetime = Field(default_factory=now)
 
 
 class InboundMessage(Doc):
