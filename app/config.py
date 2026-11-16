@@ -82,7 +82,7 @@ class Settings(BaseSettings):
     # Hashtag trends need Meta's "Instagram Public Content Access" (verified Meta business + Tech Provider + App
     # Review). Leave false until Meta approves; the card then shows clearly labelled sample posts.
     labs_hashtags_live: bool = False
-    labs_default_hashtag: str = "carwash"
+    labs_default_hashtag: str = "plantcare"
 
     # Web research for ad copy (Tavily). Read-only; "recent context", not search-volume trends.
     tavily_api_key: str = ""

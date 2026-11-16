@@ -2524,7 +2524,7 @@
           <div class="mt-2">${ideaBtn("Using what works for the competitor accounts on the Trends page as inspiration only (never copy their content), make an Instagram Reel for us. Ask me for our offer first.", "Draft a Reel inspired by this", true)}</div>
           <p class="mt-2 text-[11px] text-muted">${esc(c.note)}</p></div></div>` : ""}`;
   }
-  const TAG_EXAMPLES = ["carwash", "cardetailing", "carcare", "diwalioffer"];
+  const TAG_EXAMPLES = ["plantcare", "indoorplants", "balconygarden", "houseplants"];
   const tagKey = () => { try { return localStorage.getItem("milo_labs_tag") || ""; } catch { return ""; } };
   function labsTagRows(posts) {
     return posts.map((p) => `<div class="flex items-center justify-between gap-3 border-t border-line py-2 first:border-0">
@@ -2549,7 +2549,7 @@
       : '<span class="rounded-full bg-warn/10 px-2 py-0.5 text-[11px] font-bold text-warn">NEEDS META APPROVAL</span>';
     return `<div class="card mt-4 p-4"><div class="flex flex-wrap items-center gap-2"><h2 class="font-display text-base font-medium">Hashtag trends</h2>${badge}</div>
       <p class="text-xs text-muted">The top public Instagram posts for a hashtag, and the newest from the last 24 hours, by likes + comments.</p>
-      <p class="mb-3 mt-1 text-[11px] leading-snug text-subtle">${esc(cfg.requirement)}</p>
+      <p class="mb-3 mt-1 text-[11px] leading-snug text-subtle">${cfg.live_enabled ? "Real public posts from Instagram's Hashtag Search. Each new hashtag uses one of the 30 searches Instagram allows per 7 days." : esc(cfg.requirement)}</p>
       <form id="labsTagForm" class="flex flex-wrap items-center gap-2"><div class="flex min-w-0 flex-1 items-center rounded-lg border border-line bg-surface pl-3"><span class="text-muted">#</span><input id="labsTag" value="${esc(tag)}" maxlength="100" placeholder="carwash" aria-label="Hashtag" class="min-w-0 flex-1 bg-transparent px-1 py-2 text-sm outline-none"></div><button class="h-9 rounded-lg bg-accent px-4 text-sm font-medium text-accent-fg">Search</button></form>
       <div class="mt-2 flex flex-wrap items-center gap-1.5"><span class="text-xs text-muted">Try:</span>${TAG_EXAMPLES.map((t) => `<button data-labs-tagex="${t}" class="rounded-full border border-line px-2 py-0.5 text-xs hover:bg-accent-soft">#${t}</button>`).join("")}<span id="labsTagUsed" class="ml-auto text-[11px] text-muted">${cfg.used} of ${cfg.limit} hashtags used this week</span></div>
       <div id="labsTagBody" class="mt-3">${skeleton("h-24")}</div></div>`;
