@@ -89,7 +89,7 @@
   </style>
 </head>
 <body class="font-sans bg-bg text-ink min-h-screen">
-  <div id="loginView" class="fixed inset-0 z-50 hidden overflow-y-auto bg-bg" style="place-items:center;padding:24px;z-index:90">
+  <div id="loginView" class="fixed inset-0 z-50 hidden overflow-y-auto bg-bg" style="place-items:center;padding:24px;z-index:70">
     <div class="w-full max-w-sm">
       <div class="mb-5 flex items-center justify-center gap-2.5">
         <span class="grid size-10 place-items-center rounded-full bg-brand text-base font-extrabold text-white">M</span>
@@ -565,7 +565,6 @@
     const v = $("loginView");
     if (!v.classList.contains("hidden") && !setup) return;
     v.classList.remove("hidden"); v.style.display = "grid";
-    const intro = document.getElementById("intro"); if (intro) intro.classList.add("gone");  // the welcome screen waits until after sign-in
     v.dataset.mode = setup ? "setup" : "login";
     $("loginTitle").textContent = setup ? "Create the first admin" : "Sign in";
     $("loginHint").textContent = setup ? "Milo has no users yet. This account can approve changes and add other people. Use at least 10 characters for the password."
@@ -573,7 +572,8 @@
     $("loginNameRow").classList.toggle("hidden", !setup); $("loginNameRow").classList.toggle("flex", setup);
     $("loginBtn").textContent = setup ? "Create admin and sign in" : "Sign in";
     $("loginForm").elements.password.autocomplete = setup ? "new-password" : "current-password";
-    $("loginForm").elements.email.focus();
+    // the splash (z-index 80) plays on top first; the sign-in page waits underneath it
+    if (!document.querySelector("#intro:not(.gone)")) $("loginForm").elements.email.focus();
   }
   async function submitLogin(e) {
     e.preventDefault();
