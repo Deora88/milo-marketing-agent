@@ -26,6 +26,9 @@ Watch for:
 - **Web research** (if a Tavily key is set): one headline and one primary text, citing recent sources and dates,
   labelled "recent context", never "trends".
 - A **proposal card** once the draft is saved. Nothing has been sent to Meta.
+- On the campaign page: **Requirements** shows each detail as known, assumed (with Milo's reason) or missing;
+  **Request publish** stays disabled while anything is missing. Click **Edit draft**, change the headline, save: the
+  **History** card shows the new version with "Headline: old -> new". Ask Milo "what changed?".
 - Ask Milo to create the picture, or open the campaign and click **✨ Generate image**: Milo uses **FLUX.1 [schnell]**
   on Cloudflare Workers AI (`@cf/black-forest-labs/flux-1-schnell`, free) and attaches a square photo with no text to
   the draft. You can regenerate or **Upload ad image** instead (the ad runs on Facebook + Instagram; Instagram needs
@@ -45,6 +48,8 @@ Watch for:
 - Metrics refresh every 15 minutes (or **Refresh metrics**). In dry run the numbers are **simulated** and labelled
   as such; live campaigns use real Meta Insights (paused ads have no new results).
 - **Campaign page → Ad preview**: Milo's mock-up of the ad, plus Meta's own rendering in the Meta tabs.
+- **This period vs the previous one** (Analytics): 7 / 14 / 30 days, results and cost per result, creatives compared,
+  and **Facts / Calculations / Assumptions** kept apart. Ask Milo "how did my ads do this week vs last week?".
 
 ## 4. Optimization (2 min)
 1. Create 2–3 campaigns and approve them, then click **Run optimizer** (Analytics or Dashboard).

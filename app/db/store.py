@@ -9,8 +9,8 @@ from pymongo import ASCENDING, MongoClient, ReturnDocument
 from pymongo.database import Database
 
 from app.config import get_settings
-from app.db.models import (Approval, AuditLog, Campaign, Comment, CustomerProfile, Doc, InboundMessage, KnowledgeDoc,
-                           Lead, MetricSnapshot, SocialPost)
+from app.db.models import (Approval, AuditLog, Campaign, CampaignVersion, Comment, Competitor, CustomerProfile, Doc,
+                           HashtagSearch, InboundMessage, KnowledgeDoc, Lead, MetricSnapshot, SocialPost)
 
 T = TypeVar("T", bound=Doc)
 
@@ -49,6 +49,9 @@ def init_db() -> None:
     d[Lead.collection].create_index([("customer_id", ASCENDING)])
     d[Comment.collection].create_index([("comment_id", ASCENDING)], unique=True)  # webhook retries
     d[Comment.collection].create_index([("status", ASCENDING)])
+    d[Competitor.collection].create_index([("username", ASCENDING)], unique=True)
+    d[HashtagSearch.collection].create_index([("tag", ASCENDING)], unique=True)
+    d[CampaignVersion.collection].create_index([("campaign_id", ASCENDING), ("version", ASCENDING)], unique=True)
     d[AuditLog.collection].create_index([("event", ASCENDING), ("created_at", ASCENDING)])
 
 

@@ -68,7 +68,11 @@ def create_approval(action: str, campaign_id: int, payload: dict | None = None, 
             return {"status": "error", "message": "New budget equals the current budget."}
         err = budget_cap_error(c, payload["daily_budget"], action)
     elif action == "publish_campaign":
-        err = budget_cap_error(c, c.daily_budget, action)
+        from app import campaign_state
+
+        missing = campaign_state.requirements(c)["missing"] if c.status == "draft" else []
+        err = (f"The draft is not complete. Still missing: {', '.join(missing)}." if missing
+               else budget_cap_error(c, c.daily_budget, action))
         if (not err and "instagram" in c.platforms and not c.image_path
                 and not get_settings().meta_page_post_id and not c.meta_creative_id):
             err = ("Instagram ads need an image. Upload one on the campaign page, "

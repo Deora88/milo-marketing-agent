@@ -24,7 +24,7 @@ AD_WINDOW = timedelta(days=7)
 HUMAN_AGENT_WINDOW = timedelta(days=7)
 MAX_TEXT = 2000  # Messenger text limit
 MAX_IG_BYTES = 1000  # Instagram: under 1,000 characters and at most 1,000 bytes (UTF-8; a Hindi letter is 3 bytes)
-_page_tokens: dict[str, str] = {}
+_page_tokens: dict[str, str] = {}  # per-process cache (Milo runs as one web process); refetched after a restart
 
 
 class ReplyError(ValueError):

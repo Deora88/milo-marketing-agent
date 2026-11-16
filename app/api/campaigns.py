@@ -4,7 +4,7 @@ from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.approvals import create_approval, to_minor
 from app.db import store
@@ -41,6 +41,49 @@ def get_campaign(campaign_id: int):
     return _get(campaign_id)
 
 
+class DraftEdit(BaseModel):
+    """Fields a person edits on the campaign page (only drafts). Leave out what stays the same."""
+    name: Optional[str] = Field(None, max_length=100)
+    daily_budget_inr: Optional[float] = None
+    age_min: Optional[int] = None
+    age_max: Optional[int] = None
+    headline: Optional[str] = Field(None, max_length=200)
+    primary_text: Optional[str] = Field(None, max_length=500)
+    link_url: Optional[str] = Field(None, max_length=2000)
+    call_to_action: Optional[str] = None
+    welcome_message: Optional[str] = Field(None, max_length=500)
+    confirmed: Optional[list[str]] = None  # requirement items the person confirms ("ages", "area"...)
+
+
+@router.patch("/{campaign_id}")
+def edit_draft(campaign_id: int, body: DraftEdit):
+    """A person edits a draft: same rules as the agent's update_campaign_draft; every change is a new version."""
+    from app import campaign_state
+
+    changes = body.model_dump(exclude_none=True, exclude={"confirmed"})
+    try:
+        c, changed, _ = campaign_state.update_draft(campaign_id, changes, source="user", confirmed=body.confirmed,
+                                                    note="edited on the campaign page")
+    except campaign_state.DraftError as exc:
+        raise HTTPException(404 if "not found" in str(exc) else 409, str(exc)) from exc
+    return {"campaign": c, "changed": changed}
+
+
+@router.get("/{campaign_id}/requirements")
+def campaign_requirements(campaign_id: int):
+    from app import campaign_state
+
+    return campaign_state.requirements(_get(campaign_id))
+
+
+@router.get("/{campaign_id}/versions")
+def campaign_versions(campaign_id: int):
+    from app import campaign_state
+
+    c = _get(campaign_id)
+    return {"current_version": c.version, "versions": campaign_state.history(c.id)}
+
+
 @router.get("/{campaign_id}/metrics")
 def campaign_metrics(campaign_id: int):
     from app.optimizer import window_start
@@ -66,8 +109,10 @@ async def upload_image(campaign_id: int, file: UploadFile):
 
         from PIL import Image
 
+        from app.social.media import MAX_PIXELS
+
         with Image.open(BytesIO(data)) as img:
-            if img.format not in ("JPEG", "PNG"):
+            if img.format not in ("JPEG", "PNG") or img.width * img.height > MAX_PIXELS:
                 raise ValueError(img.format)
             img.verify()
     except Exception as exc:  # noqa: BLE001 - any decode problem means "not a usable image"
@@ -75,8 +120,12 @@ async def upload_image(campaign_id: int, file: UploadFile):
     IMAGE_DIR.mkdir(parents=True, exist_ok=True)
     path = IMAGE_DIR / f"campaign-{c.id}{ext}"
     path.write_bytes(data)
+    from app import campaign_state
+
+    before = c.model_copy(deep=True)
     c.image_path, c.meta_image_hash = str(path), None
     store.save(c)
+    campaign_state.record_image(before, c, "user", "image uploaded")
     store.audit("image_uploaded", campaign_id=c.id, bytes=len(data))
     return c
 

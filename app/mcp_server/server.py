@@ -10,6 +10,7 @@ import sys
 
 from mcp.server.fastmcp import FastMCP
 
+from app import campaign_state
 from app.approvals import create_approval, to_minor
 from app.config import get_settings
 from app.db import store
@@ -23,25 +24,20 @@ mcp = FastMCP(
     instructions="Meta (Facebook + Instagram) ad campaign tools. Changes to live ads always need human approval.",
 )
 
-RESTRICTED = {"HOUSING", "EMPLOYMENT", "CREDIT"}
-CATEGORIES = RESTRICTED | {"NONE", "ISSUES_ELECTIONS_POLITICS"}
-CTAS = {"LEARN_MORE", "SHOP_NOW", "SIGN_UP", "CONTACT_US", "DOWNLOAD", "BOOK_TRAVEL"}
-PLATFORMS = {"facebook", "instagram"}
-DESTINATIONS = {"website", "messenger"}
 
 
 @mcp.tool()
 def create_campaign_draft(
     name: str,
     daily_budget_inr: float,
-    countries: list[str],
-    age_min: int,
-    age_max: int,
-    headline: str,
-    primary_text: str,
-    link_url: str,
+    countries: list[str] | None = None,
+    age_min: int | None = None,
+    age_max: int | None = None,
+    headline: str = "",
+    primary_text: str = "",
+    link_url: str = "",
     call_to_action: str = "LEARN_MORE",
-    special_ad_category: str = "NONE",
+    special_ad_category: str | None = None,
     location_name: str = "",
     latitude: float | None = None,
     longitude: float | None = None,
@@ -49,20 +45,23 @@ def create_campaign_draft(
     platforms: list[str] | None = None,
     destination: str = "website",
     welcome_message: str = "",
+    assumed: dict[str, str] | None = None,
 ) -> dict:
-    """Save a Meta campaign draft locally. Nothing is sent to Meta.
+    """Save a Meta campaign draft locally. Nothing is sent to Meta. A draft may be incomplete: empty headline,
+    primary text or landing page are listed as missing, and publishing is refused until they are filled in.
 
     Args:
         name: Campaign name.
         daily_budget_inr: Daily budget in Indian rupees (minimum 100).
-        countries: ISO country codes, e.g. ["IN"].
-        age_min: Minimum age, 18-65.
+        countries: ISO country codes, e.g. ["IN"]. Leave out if the user didn't say (India is assumed).
+        age_min: Minimum age, 18-65. Leave out if the user didn't say (18-65 is assumed).
         age_max: Maximum age, 18-65.
-        headline: Ad headline, max 40 characters.
-        primary_text: Main ad text, max 125 characters.
-        link_url: Landing page URL starting with https://.
+        headline: Ad headline, max 40 characters. Empty = still missing.
+        primary_text: Main ad text, max 125 characters. Empty = still missing.
+        link_url: Landing page URL starting with https://. Empty = still missing (optional for Messenger ads).
         call_to_action: LEARN_MORE, SHOP_NOW, SIGN_UP, CONTACT_US, DOWNLOAD or BOOK_TRAVEL.
-        special_ad_category: NONE, HOUSING, EMPLOYMENT, CREDIT or ISSUES_ELECTIONS_POLITICS.
+        special_ad_category: NONE, HOUSING, EMPLOYMENT, CREDIT or ISSUES_ELECTIONS_POLITICS. Leave out only if you
+            haven't asked the user (NONE is then assumed and must be confirmed).
         location_name: Optional, for local ads: place name, e.g. "Vaishali, Ghaziabad".
         latitude: Optional, latitude of that place (-90 to 90). Give together with longitude and radius_km.
         longitude: Optional, longitude of that place (-180 to 180).
@@ -70,92 +69,124 @@ def create_campaign_draft(
         platforms: Where the ad runs: ["facebook", "instagram"] (default, one ad on both), ["facebook"] or
             ["instagram"]. Instagram needs an ad image, which the user uploads on the campaign page.
         destination: "website" (default: a click opens link_url) or "messenger" (a click opens a Messenger chat
-            with the Page, where its automated replies answer). Messenger ads run on Facebook and Messenger only,
-            and link_url is optional for them.
+            with the Page). Messenger ads run on Facebook and Messenger only, and link_url is optional for them.
         welcome_message: Messenger only: the first message people see in the chat, max 300 characters.
+        assumed: Details YOU chose without the user saying so, as {item: short reason}. Items: name, budget, area,
+            ages, platforms, destination, special_ad_category, headline, primary_text, link_url, call_to_action.
+            Example: {"area": "user said Ghaziabad; 5 km around Vaishali chosen by Milo"}.
     """
-    errors = []
-    name = (name or "").strip()
-    if not name or len(name) > 100:
-        errors.append("name is required, at most 100 characters")
-    countries = [str(c).strip().upper() for c in (countries or []) if str(c).strip()]
-    if any(len(c) != 2 or not c.isalpha() for c in countries):
-        errors.append('countries must be 2-letter ISO codes, e.g. ["IN"]')
-    if not countries and radius_km is None:
-        errors.append("give at least one country (or local targeting with latitude, longitude and radius_km)")
-    if daily_budget_inr < 100:
-        errors.append("daily budget must be at least Rs 100")
-    if not 18 <= age_min <= age_max <= 65:
-        errors.append("ages must satisfy 18 <= age_min <= age_max <= 65")
-    destination = (destination or "website").lower()
-    note_dest = ""
-    if destination not in DESTINATIONS:
-        errors.append("destination must be website or messenger")
-    if destination == "messenger":
-        if link_url and not link_url.startswith("https://"):
-            errors.append("link_url must start with https://")
-        if len(welcome_message) > 300:
-            errors.append("welcome_message is longer than 300 characters")
-        if platforms and "instagram" in [p.lower() for p in platforms]:
-            note_dest = " Messenger ads run on Facebook and Messenger, so Instagram was left out."
-        platforms = ["facebook"]
-    elif not link_url.startswith("https://"):
-        errors.append("link_url must start with https://")
-    if len(headline) > 40:
-        errors.append("headline is longer than 40 characters")
-    if len(primary_text) > 125:
-        errors.append("primary_text is longer than 125 characters")
-    if call_to_action not in CTAS:
-        errors.append(f"call_to_action must be one of {sorted(CTAS)}")
-    if special_ad_category not in CATEGORIES:
-        errors.append(f"special_ad_category must be one of {sorted(CATEGORIES)}")
-    if special_ad_category in RESTRICTED and (age_min != 18 or age_max != 65):
-        errors.append(f"{special_ad_category} ads must target ages 18-65 (Meta rule)")
-    platforms = [p.lower() for p in (platforms or ["facebook", "instagram"])]
-    if not platforms or set(platforms) - PLATFORMS:
-        errors.append("platforms must be facebook and/or instagram")
-    cap = get_settings().max_daily_budget_inr
-    if daily_budget_inr > cap:
-        errors.append(f"daily budget is above the Rs {cap:,.0f}/day cap (MAX_DAILY_BUDGET_INR)")
-    local = [latitude, longitude, radius_km]
-    if any(v is not None for v in local):
-        if any(v is None for v in local):
-            errors.append("local targeting needs latitude, longitude and radius_km together")
-        else:
-            if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
-                errors.append("latitude/longitude out of range")
-            if not 1 <= radius_km <= 80:
-                errors.append("radius_km must be between 1 and 80 (Meta rule)")
-            if special_ad_category in RESTRICTED and radius_km < 15:
-                errors.append(f"{special_ad_category} ads need a radius of at least 15 km (Meta rule)")
+    auto: dict[str, str] = {}
+    if countries is None and radius_km is None:
+        countries, auto["area"] = ["IN"], "not given: India assumed"
+    if age_min is None and age_max is None:
+        auto["ages"] = "not given: Meta's full 18-65 assumed"
+    if special_ad_category is None:
+        special_ad_category, auto["special_ad_category"] = "NONE", "not asked: assumed not housing, jobs, credit or politics"
+    args = {"name": name, "daily_budget_inr": daily_budget_inr, "countries": countries or [],
+            "age_min": 18 if age_min is None else age_min, "age_max": 65 if age_max is None else age_max,
+            "headline": headline, "primary_text": primary_text, "link_url": link_url, "call_to_action": call_to_action,
+            "special_ad_category": special_ad_category, "location_name": location_name, "latitude": latitude,
+            "longitude": longitude, "radius_km": radius_km, "platforms": platforms, "destination": destination,
+            "welcome_message": welcome_message}
+    errors, fields, note_dest = campaign_state.validate(args)
     if errors:
         return {"status": "invalid", "errors": errors}
-
-    c = store.insert(Campaign(
-        location_name=location_name.strip(),
-        latitude=latitude,
-        longitude=longitude,
-        radius_km=radius_km,
-        platforms=sorted(set(platforms), key=["facebook", "instagram"].index),
-        name=name,
-        daily_budget=to_minor(daily_budget_inr),
-        countries=[x.upper() for x in countries],
-        age_min=age_min,
-        age_max=age_max,
-        headline=headline,
-        primary_text=primary_text,
-        link_url=link_url,
-        call_to_action=call_to_action,
-        special_ad_category=special_ad_category,
-        destination=destination,
-        welcome_message=welcome_message.strip() if destination == "messenger" else "",
-        objective="OUTCOME_ENGAGEMENT" if destination == "messenger" else "OUTCOME_TRAFFIC",
-    ))
+    assumptions = {**auto, **{k: str(v)[:200] for k, v in (assumed or {}).items() if k in campaign_state.ITEMS}}
+    c = store.insert(Campaign(**fields, assumptions=assumptions))
+    campaign_state.record_version(None, c, source="agent", note="draft created")
     store.audit("draft_created", campaign_id=c.id)
-    note = " Upload an ad image on the campaign page before publishing (needed for Instagram)." \
-        if "instagram" in c.platforms else ""
+    req = campaign_state.requirements(c)
     return {"status": "draft_saved", "campaign_id": c.id, "name": c.name, "platforms": c.platforms,
-            "destination": c.destination, "message": f"Draft saved.{note}{note_dest}"}
+            "destination": c.destination, "missing": req["missing"],
+            "assumed": {i["label"]: i["note"] for i in req["items"] if i["status"] == "assumed"},
+            "message": "Draft saved." + note_dest + (
+                f" Still missing: {', '.join(req['missing'])}." if req["missing"] else "") + (
+                " Confirm the assumed details with the user before requesting publish." if req["assumed"] else "")}
+
+
+@mcp.tool()
+def update_campaign_draft(
+    campaign_id: int,
+    name: str | None = None,
+    daily_budget_inr: float | None = None,
+    countries: list[str] | None = None,
+    age_min: int | None = None,
+    age_max: int | None = None,
+    headline: str | None = None,
+    primary_text: str | None = None,
+    link_url: str | None = None,
+    call_to_action: str | None = None,
+    special_ad_category: str | None = None,
+    location_name: str | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
+    radius_km: float | None = None,
+    platforms: list[str] | None = None,
+    destination: str | None = None,
+    welcome_message: str | None = None,
+    assumed: dict[str, str] | None = None,
+    confirmed: list[str] | None = None,
+    note: str = "",
+) -> dict:
+    """Change a campaign DRAFT (only drafts; nothing is sent to Meta). Give only the fields that change. Every
+    change is saved as a new version, so the user can see what changed and when.
+
+    Args:
+        campaign_id: Milo campaign id.
+        name, daily_budget_inr, countries, age_min, age_max, headline, primary_text, link_url, call_to_action,
+        special_ad_category, location_name, latitude, longitude, radius_km, platforms, destination,
+        welcome_message: New values, same rules as create_campaign_draft. Leave out what stays the same.
+        assumed: Details you chose without the user saying so, as {item: short reason} (items as in
+            create_campaign_draft).
+        confirmed: Items the user has now confirmed, e.g. ["ages", "area"] (they stop being "assumed").
+        note: Why it changed, in a few words (e.g. "user asked for a shorter headline").
+    """
+    changes = {k: v for k, v in {
+        "name": name, "daily_budget_inr": daily_budget_inr, "countries": countries, "age_min": age_min,
+        "age_max": age_max, "headline": headline, "primary_text": primary_text, "link_url": link_url,
+        "call_to_action": call_to_action, "special_ad_category": special_ad_category,
+        "location_name": location_name, "latitude": latitude, "longitude": longitude, "radius_km": radius_km,
+        "platforms": platforms, "destination": destination, "welcome_message": welcome_message,
+    }.items() if v is not None}
+    if radius_km is not None and countries is None:
+        changes["countries"] = []  # switching to local targeting
+    try:
+        c, changed, extra = campaign_state.update_draft(campaign_id, changes, source="agent", assumed=assumed,
+                                                        confirmed=confirmed, note=note)
+    except campaign_state.DraftError as exc:
+        return {"status": "invalid", "errors": [str(exc)]}
+    req = campaign_state.requirements(c)
+    return {"status": "draft_updated", "campaign_id": c.id, "version": c.version, "changed": changed,
+            "missing": req["missing"], "assumed": req["assumed"],
+            "message": ("Saved as version %d." % c.version if changed else "Nothing changed.") + extra}
+
+
+@mcp.tool()
+def get_campaign_requirements(campaign_id: int) -> dict:
+    """What a campaign still needs before it can be published: each detail is known, assumed (with why) or missing.
+    Call this before request_publish and ask the user about anything missing or assumed.
+
+    Args:
+        campaign_id: Milo campaign id.
+    """
+    c = store.get(Campaign, campaign_id)
+    if c is None:
+        return {"status": "error", "message": f"Campaign {campaign_id} not found."}
+    return {"campaign_id": c.id, "status": c.status, "version": c.version, **campaign_state.requirements(c)}
+
+
+@mcp.tool()
+def get_campaign_history(campaign_id: int) -> dict:
+    """Every saved version of a campaign, newest first, with what changed, who changed it and when.
+
+    Args:
+        campaign_id: Milo campaign id.
+    """
+    c = store.get(Campaign, campaign_id)
+    if c is None:
+        return {"status": "error", "message": f"Campaign {campaign_id} not found."}
+    return {"campaign_id": c.id, "current_version": c.version, "versions": [
+        {**v, "at": v["at"].isoformat()} for v in campaign_state.history(c.id)]}
 
 
 @mcp.tool()
@@ -201,6 +232,48 @@ async def get_campaign_metrics(campaign_id: int, days: int = 7) -> dict:
         },
         "daily": [r.__dict__ | {"ctr": r.ctr, "cpc": r.cpc} for r in rows],
     }
+
+
+@mcp.tool()
+def analyze_performance(campaign_id: int | None = None, days: int = 7) -> dict:
+    """Compare this period with the previous one (e.g. last 7 days vs the 7 before) and compare creatives.
+    Returns facts (stored numbers), calculations (each with formula and inputs) and assumptions/caveats separately.
+    Read-only. Use it for "how are my ads doing", "what changed", "which ad works best".
+
+    Args:
+        campaign_id: One campaign, or leave out for the whole account.
+        days: Length of each period in days (1-30, default 7).
+    """
+    from app import analysis
+
+    try:
+        return analysis.analyze(campaign_id, days)
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@mcp.tool()
+def get_trends_and_ideas() -> dict:
+    """Trends page (prototype): what works on the user's own Instagram (format, day/time, caption style), upcoming
+    Indian festivals and seasons with post/ad ideas (next 60 days), and the top recent posts of competitor accounts
+    the user follows on the Trends page. Read-only. Use it for "what should I post this week?" or "what works for others?".
+    Ideas are suggestions: create drafts only when the user asks, and never invent offers or prices.
+    """
+    from app.labs import competitors, hashtags, moments, own
+
+    s = get_settings()
+    if not s.labs_enabled:
+        return {"status": "unavailable", "message": "The Trends page is turned off (LABS_ENABLED=false)."}
+    comp = competitors.overview()
+    return {"prototype": True, "own_account": own.summary(),
+            "upcoming": [{k: m[k] for k in ("name", "start", "end", "post_idea", "ad_idea")}
+                         for m in moments.upcoming(business=s.dm_business_name)[:8]],
+            "competitors": {"findings": comp["findings"], "note": comp["note"],
+                            "top_posts": [{k: p[k] for k in ("username", "type", "engagement", "caption")}
+                                          for p in comp["top_posts"][:5]]},
+            "hashtags": {"live": hashtags.is_live(),
+                         "note": "Real hashtag posts need Meta approval." if not hashtags.is_live() else
+                                 "Hashtag posts are on the Trends page (30 hashtags a week)."}}
 
 
 @mcp.tool()
@@ -371,7 +444,12 @@ async def read_landing_page(url: str) -> dict:
 
 
 TOOL_NAMES = [
+    "analyze_performance",
+    "get_trends_and_ideas",
     "create_campaign_draft",
+    "update_campaign_draft",
+    "get_campaign_requirements",
+    "get_campaign_history",
     "list_campaigns",
     "get_campaign_metrics",
     "request_publish",

@@ -52,7 +52,7 @@ def delete_faq(faq_id: int):
 
 @router.post("/faq/sample")
 def sample_faq():
-    """Add Milo's sample home-cleaning FAQ (entries already present are skipped)."""
+    """Add Milo's sample FAQ (Bagicha Doctor demo) (entries already present are skipped)."""
     added = agent.load_sample_faq()
     if added:
         store.audit("faq_changed", change="sample loaded", count=added)

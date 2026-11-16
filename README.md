@@ -70,7 +70,8 @@ app/
   db/                MongoDB: models (Campaign, Approval, MetricSnapshot, AuditLog, InboundMessage, FaqEntry, Lead) + store (ids, atomic claim)
   dm/inbox.py        DM conversations, Meta's reply window, replies through the Send API
   dm/agent.py        DM bot: FAQ answers, lead capture, hand-off (drafts unless DM_AUTOREPLY=true)
-  dm/knowledge.py    business PDFs: upload checks, text extraction (pypdf), passages the bot may cite
+  dm/knowledge.py    business PDFs: upload checks, text extraction (pypdf), passages, BM25 + hybrid search
+  dm/embeddings.py   meaning-based PDF search: Cloudflare bge-m3 embeddings, cached in MongoDB
   dm/profiles.py     sender names from Meta (Messenger profile / Instagram user), cached
   security.py        Host allow-list, X-Milo-Client header on changes (CSRF), optional API token
   util/redact.py     masks tokens and keys in error text
@@ -111,6 +112,69 @@ tests/               201 tests: MCP tools + approval gate (caps, spend switch, C
   10). Activity logs `approval_recovered`. Approving again is safe: publishing resumes from the saved Meta ids.
 - Optional `API_TOKEN`: every `/api` request then needs `Authorization: Bearer <token>` (use this if Milo is ever
   reachable beyond localhost). Error messages shown in the UI have tokens and keys masked.
+- **Tunnel guard:** ngrok is only for Meta. A request that arrives through a tunnel or proxy (it carries
+  `X-Forwarded-*` / `Forwarded` headers) can reach only `/webhooks/` and `/media/` unless `API_TOKEN` is set; the
+  dashboard and `/api` answer 403 "use http://localhost:8000". This holds even if the tunnel rewrites the Host
+  header to localhost.
+- CORS allows only the methods and headers the UI uses (`Content-Type`, `Authorization`, `X-Milo-Client`).
+- Uploads: images over 40 megapixels are refused before decoding; PDFs are read in a worker thread so a slow file
+  never delays webhooks. Milo runs as one web process (per-process locks and caches); don't start several workers.
+
+## Campaign drafts: requirements and versions
+- **Requirements:** Milo saves a draft as soon as it knows the name and budget. The campaign page lists every
+  detail as **known**, **assumed** (Milo chose it without you saying so, with the reason, e.g. "ages: not given,
+  18-65 assumed") or **missing** (headline, text, landing page, or the image Instagram needs). Publishing is refused
+  while anything is missing; Milo asks you to confirm assumed details before requesting publish (**Confirm** on the
+  page does the same).
+- **Versions:** every change to what the ad says, who it targets or what it spends is saved as a numbered version
+  with the old and new value: drafts created or edited (by Milo or on the page with **Edit draft**), images added or
+  replaced, and approved budget changes. The **History** card and `get_campaign_history` answer "what changed?".
+  A draft with a waiting publish request can't be edited (reject it first); live ads change only through approvals.
+
+## Performance analysis
+- **This period vs the previous one** (7, 14 or 30 days) for the account and each campaign: spend, clicks, CTR, CPC,
+  results and cost per result. A result is a landing page view (website ads) or a started Messenger conversation.
+- **Conversions and engagement** come from Meta Insights (`inline_link_clicks` and `actions`: landing page views,
+  Messenger conversations, leads, post engagement). Milo stores 60 days, so longer comparisons work.
+- **Creatives compared:** campaigns ranked by CTR, with cost per result; ones under the optimizer's minimum
+  impressions are marked "too few impressions to compare".
+- **Facts, calculations, assumptions** are kept apart on the Analytics page and in `analyze_performance`: facts
+  are stored numbers, every calculation shows its formula and inputs, and caveats (simulated data, missing days,
+  small samples, Meta's attribution and late revisions) are listed separately. Milo answers in the same three parts.
+
+## Trends (prototype v0.1)
+An early, clearly labelled page for trends and ideas (sidebar **Trends · LABS**; code name "labs"). It is read-only: every idea
+button only puts a prompt in the chat box, Milo drafts it, and posts and ads still need Approve. More sources
+(Google Trends) may be added later. `LABS_ENABLED=false` hides the page, its `/api/labs` routes and the
+agent tool `get_trends_and_ideas`.
+
+- **What works on your account:** from your published Instagram posts of the last 30 days and their results
+  (reach, else views, else likes + comments): best format, best day and time of day (India time, as a grid), best
+  caption length and whether showing a price helps. Shown only with at least 3 posts; each group says how many
+  posts it is based on.
+- **Upcoming moments:** Indian festivals and seasons in the next 60 days (Diwali, Bhai Dooj, Chhath, wedding
+  season, winter dust season, Christmas, New Year...), each with a post and/or ad idea. Lunar festival dates change
+  yearly and are listed per year in `app/labs/moments.py` (2026 checked); update them each year.
+- **Competitor watch:** add up to 10 public Instagram **business or creator** usernames. Milo reads their recent
+  posts with the Instagram Business Discovery API (Page token, no extra App Review) and ranks them by likes +
+  comments, with simple findings (which format gets more engagement, how often they post vs you). Only public
+  numbers and a short caption excerpt are stored; nothing is copied. Refreshed at most every 6 hours, or with
+  **Refresh**. Dry run makes no Instagram calls.
+- **Hashtag trends (needs Meta approval):** type a hashtag (e.g. `carwash`) to see its top public Instagram posts
+  and the newest from the last 24 hours, ranked by likes + comments, with findings (best format, hashtags per
+  post) and a Draft button. This uses the Instagram Hashtag Search API, which needs Meta's **Instagram Public
+  Content Access** feature: a verified Meta business, Tech Provider status and App Review. Until then
+  (`LABS_HASHTAGS_LIVE=false`, the default, or dry run) the card shows clearly labelled **sample** posts and says
+  so. After approval set `LABS_HASHTAGS_LIVE=true`; no code change. Meta allows 30 different hashtags per 7 days
+  (repeat searches don't count again; Milo shows the count), no emoji hashtags; results are cached for 6 hours.
+- **Ads other businesses run:** Meta's Ad Library API only covers political and social-issue ads, so this opens
+  Meta's public Ad Library website already searched (keyword + `LABS_AD_LIBRARY_COUNTRY`).
+
+## Agent safety evals
+`tests/test_agent_evals.py` runs Milo's real agent loop (instruction, tool guard, runner, tools, database) with a
+scripted worst-case model and checks the outcome in the database: no publish without a human (repeated requests,
+a made-up "approve" tool), prompt injection in campaign text (an injected budget is refused by the cap, nothing
+executes, every attempt is audited), and invalid tool input (clear errors, nothing stored).
 
 ## Optimization loop
 Runs after every metrics pull (every `METRICS_POLL_MINUTES`) and from **Run optimizer** in the UI. Rules, on live
@@ -184,6 +248,10 @@ primary text, with a "based on" note. The chat shows the sources under the reply
 | GET | `/api/campaigns?status=&q=` | Campaigns, optionally filtered by status / name |
 | GET | `/api/campaigns/{id}` | One campaign |
 | GET | `/api/campaigns/{id}/metrics` | Stored daily metrics (last 7 days) |
+| PATCH | `/api/campaigns/{id}` | Edit a draft (same rules as the agent; `confirmed: [...]` confirms assumed details); every change is a new version |
+| GET | `/api/campaigns/{id}/requirements` · `/versions` | Requirements checklist (known / assumed / missing) · version history with what changed |
+| GET · POST · DELETE | `/api/labs` · `POST /api/labs/hashtags` · `/api/labs/competitors` · `/api/labs/competitors/{username}` · `POST /api/labs/competitors/refresh` | Trends page (prototype): trends and ideas, competitor list (404 when `LABS_ENABLED=false`) |
+| GET | `/api/analysis?days=7&campaign_id=` | This period vs the previous one, creatives compared; facts, calculations and assumptions kept apart |
 | GET | `/api/approvals?status=pending` | Approvals (`pending`, `executing`, `approved`, `rejected`, `all`), with campaign name |
 | POST | `/api/approvals/{id}/approve` · `/reject` | Human decision; approve executes the action (atomic; 409 if already decided, 502 + retry on Meta failure) |
 | POST | `/api/metrics/refresh` | Pull metrics now (also runs the optimizer) |
@@ -225,7 +293,12 @@ Milo's tools live in an MCP server, so any MCP client can use them. The ADK agen
 
 | Tool | What it does |
 | --- | --- |
-| `create_campaign_draft` | Validates and saves a draft; platforms (Facebook and/or Instagram), destination (website or Messenger chat), countries or a local area (place + latitude/longitude + 1–80 km radius), budget within the cap |
+| `create_campaign_draft` | Validates and saves a draft (may be incomplete); platforms (Facebook and/or Instagram), destination (website or Messenger chat), countries or a local area (place + latitude/longitude + 1–80 km radius), budget within the cap; records what Milo assumed |
+| `update_campaign_draft` | Changes a draft (only drafts); each change is a new version; `confirmed` marks assumed details as confirmed |
+| `get_campaign_requirements` | Every detail known / assumed (with why) / missing; publishing is refused while anything is missing |
+| `get_campaign_history` | All versions with what changed, who changed it and when |
+| `get_trends_and_ideas` | Trends page (prototype): own-account patterns, upcoming festivals with ideas, competitor highlights (read-only) |
+| `analyze_performance` | Period-over-period and creative comparison with facts, calculations (formula + inputs) and assumptions |
 | `list_campaigns` | Lists campaigns |
 | `get_campaign_metrics` | Daily spend, impressions, clicks, CTR, CPC |
 | `request_publish` / `request_pause` / `request_budget_change` | Creates a pending approval only — never changes a live ad |
@@ -327,6 +400,9 @@ the same approval gate as ads: nothing is posted until you click **Approve**.
 - **Scheduling:** optional time (at least 5 minutes, at most 60 days ahead). After approval the post waits as
   *Scheduled*; the scheduler posts it at that time (Milo must be running). If Milo was off for more than 6 hours
   past that time, the post is marked *failed* ("Missed") instead of going out late; pick a new time and request again.
+- **Never posted twice:** the Instagram media id is saved the moment Instagram publishes, so a later error can't
+  lead to a second publish. A post cut off mid-publish (Milo stopped or crashed) is moved on at startup and after
+  30 minutes: *published* if Instagram returned an id, otherwise *failed* with "check Instagram before retrying".
 - **Chat:** "Make a Reel about our ceramic coating" → Milo drafts it (`create_instagram_post`) and requests
   approval (`request_post_publish`). It can never post by itself.
 - **How it posts:** Instagram Content Publishing API through the Page token: `POST /{ig-user-id}/media` per item
@@ -346,11 +422,38 @@ the same approval gate as ads: nothing is posted until you click **Approve**.
 - **Story replies and mentions** arrive as DMs and show in the Inbox as "Replied to your story" or "Mentioned
   you in their story" (with a link while Meta's story link is valid).
 
+## PDF answers (search and exact quotes)
+How the DM and comment bot answers from your PDFs (`app/dm/knowledge.py`, `app/dm/embeddings.py`):
+
+- **Passages:** each page is cut into passages of up to 700 characters; each starts with the last sentence or two
+  of the one before, so a service name and its price stay together.
+- **Search:** BM25 keyword ranking with light stemming ("Sundays" = "Sunday") and a few common synonyms (GPay = UPI,
+  subscription = plan). With `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN` set (the same as image generation),
+  it also searches by meaning with Cloudflare's multilingual `@cf/baai/bge-m3` embeddings and merges both rankings
+  (reciprocal rank fusion), so reworded and Hinglish questions ("gaadi ki dhulai kitne ki hai?") find the answer.
+  Passage vectors are made once (when a PDF is uploaded) and cached in MongoDB; the customer's question is embedded
+  per message and never stored. If Cloudflare fails or the free allowance runs out, keyword search carries on alone.
+  `KNOWLEDGE_EMBEDDINGS=false` turns meaning-based search off.
+- **Exact answers:** the model must copy the sentences that answer the question word for word ("quotes"). Milo
+  checks every quote against the cited passage; only then may the answer go out automatically, and it goes out as
+  the PDF's own words: "From our price list: ...". One changed word or price = no automatic answer.
+- **Automatic sending:** `DM_AUTOREPLY=true` sends FAQ answers; add `DM_PDF_AUTOREPLY=true` to also send exact PDF
+  answers. Anything else stays a draft for a person, with the reason in its note.
+- **Price check:** every number in the bot's draft must appear in the FAQ entry or passage it cites; otherwise the
+  draft's note says `check: 90 not in the cited source`, so a made-up offer is caught before you click Send.
+- **Tested:** `tests/test_rag.py`. On a 3-page car-care brochure, the right passage was in the top 4 for 22 of 24
+  customer questions (word overlap before: 18), and first for 10 of 12 new questions (before: 6).
+
 ## Comments (Instagram and Facebook posts)
 The **Comments** page lists public comments on your Instagram posts and Facebook Page posts (Milo's own posts are
 linked), newest first, with **To answer / Replied / Hidden / All** tabs and an unread count in the sidebar.
 
-- **A person replies, the bot only drafts:** a comment is public, so nothing is posted until you click **Reply**.
+- **Automatic answers (opt-in, `COMMENT_AUTOREPLY=true`):** the bot answers a new comment by itself only with words
+  written beforehand: the stored FAQ answer, or exact sentences from your PDFs (checked word for word). A comment
+  with a phone number gets "please send us a DM" and is hidden, so the number isn't public. Complaints and
+  anything the FAQ and PDFs don't cover wait for you, with a draft and the reason (Activity: "Comment needs you").
+  At most 3 automatic replies per person a day, never to comments older than 24 hours or to your own comments.
+- **Otherwise a person replies, the bot only drafts:** nothing is posted until you click **Reply**.
   **Ask the bot for a draft** uses the same FAQ/PDF rules as DMs; if a comment has a phone number, the draft asks
   the person to DM you and suggests hiding the comment. **Hide** keeps a comment visible only to the writer and their
   friends (spam, phone numbers). Dry run saves replies in Milo only.
@@ -398,9 +501,8 @@ For every new DM the bot does one of three things, logged in Activity and shown 
 - **Business documents (PDF):** under the Inbox, **Upload PDF** (price list, brochure, policies; PDF only, up to
   10 MB and 100 pages). Milo keeps only the extracted text, page by page; **Read** shows exactly what the bot sees,
   **Turn off** hides a document from the bot, **Delete** removes it. Scanned PDFs (no text layer) are refused:
-  there is no OCR. For each DM the bot is shown the few passages that share the most words with the message, with
-  ids it must cite (checked in code, otherwise a hand-off). **An answer that uses a PDF is always a draft**, even
-  with `DM_AUTOREPLY=true`: a person checks it and clicks Send. The draft notes the PDF and page it came from.
+  there is no OCR. For each DM the bot is shown the 4 best-matching passages, with ids it must cite (checked in
+  code, otherwise a hand-off). See **PDF answers (search and exact quotes)** below.
 - **Leads:** the **Leads** card at the top of the Inbox lists every phone number people shared in DMs (newest
   first) with the sender's name and id, the message, the time and **Open chat**. **Download CSV** saves them all
   for Excel; cells that look like formulas are saved as text so the file can't run anything.

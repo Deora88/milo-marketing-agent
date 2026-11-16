@@ -58,6 +58,21 @@ class Campaign(Doc):
     meta_image_hash: Optional[str] = None
     meta_creative_id: Optional[str] = None
     meta_ad_id: Optional[str] = None
+    # Requirements: details Milo filled in without the user saying so -> why (app/campaign_state.py)
+    assumptions: dict = Field(default_factory=dict)
+    version: int = 1  # latest CampaignVersion number
+    created_at: datetime = Field(default_factory=now)
+
+
+class CampaignVersion(Doc):
+    """One saved state of a campaign's ad, targeting and budget, and what changed from the version before."""
+    collection: ClassVar[str] = "campaign_versions"
+    campaign_id: int
+    version: int
+    snapshot: dict = Field(default_factory=dict)
+    changes: dict = Field(default_factory=dict)  # field -> {"from": old, "to": new}; empty for version 1
+    source: str = "agent"  # agent | user | approval | system
+    note: str = ""
     created_at: datetime = Field(default_factory=now)
 
 
@@ -101,6 +116,7 @@ class InboundMessage(Doc):
     agent_action: str = ""
     suggested_reply: str = ""
     agent_note: str = ""
+    send_started_at: Optional[datetime] = None  # the bot began sending its reply (a timeout after this may be sent)
     handed_off: bool = False  # the agent passed this message to a person (keeps the bot out for DM_HANDOFF_HOURS)
     # a person clicked "Hand back to bot": hand-offs and Page replies before this time no longer keep the bot out
     bot_resumed_at: Optional[datetime] = None
@@ -149,6 +165,7 @@ class SocialPost(Doc):
     source: str = "user"  # user | agent
     created_at: datetime = Field(default_factory=now)
     published_at: Optional[datetime] = None
+    publishing_started_at: Optional[datetime] = None  # set when publishing starts; finds runs cut off by a crash
     # Results from Instagram (likes, views, reach...): {metric: number}; refreshed by the scheduler
     insights: dict = Field(default_factory=dict)
     insights_at: Optional[datetime] = None
@@ -157,7 +174,8 @@ class SocialPost(Doc):
 
 class Comment(Doc):
     """A public comment on the business's Instagram post or Facebook Page post, delivered by the webhook.
-    Replies are written by a person in Milo (the bot only drafts); nothing is posted without that click."""
+    Replies are written by a person in Milo (the bot only drafts), unless COMMENT_AUTOREPLY=true lets the bot post
+    pre-written words (FAQ answer / exact PDF sentences)."""
     collection: ClassVar[str] = "comments"
     platform: str  # "instagram" | "facebook"
     account_id: str  # Instagram account id or Page id the comment was made on (webhook entry.id)
@@ -170,11 +188,39 @@ class Comment(Doc):
     own: bool = False  # written by the business itself (its replies come back through the webhook too)
     status: str = "new"  # new | read | replied | hidden | removed
     hidden: bool = False
-    replies: list[dict] = Field(default_factory=list)  # {text, at, mode: live|dry_run, meta_id}
+    replies: list[dict] = Field(default_factory=list)  # {text, at, mode: live|dry_run, meta_id, by: person|bot}
+    replying_at: Optional[datetime] = None  # a reply is being posted (blocks a second click; expires after 2 min)
     suggested_reply: str = ""
     agent_note: str = ""
     commented_at: Optional[datetime] = None
     received_at: datetime = Field(default_factory=now)
+
+
+class Competitor(Doc):
+    """Trends page: a public Instagram business/creator account the user follows up on (Business Discovery API).
+    Only public numbers and captions are stored, to rank their posts; nothing is copied or re-posted."""
+    collection: ClassVar[str] = "labs_competitors"
+    username: str
+    name: str = ""
+    followers: int = 0
+    media_count: int = 0
+    media: list[dict] = Field(default_factory=list)  # {caption, likes, comments, type, permalink, timestamp}
+    checked_at: Optional[datetime] = None
+    error: str = ""
+    added_at: datetime = Field(default_factory=now)
+
+
+class HashtagSearch(Doc):
+    """Trends page: one Instagram hashtag looked up with the Hashtag Search API (only after Meta approval).
+    Meta allows 30 unique hashtags per rolling 7 days; first_queried_at is what counts against that limit."""
+    collection: ClassVar[str] = "labs_hashtags"
+    tag: str
+    hashtag_id: str = ""
+    first_queried_at: Optional[datetime] = None
+    top: list[dict] = Field(default_factory=list)  # {caption, likes, comments, type, permalink, timestamp, hashtags}
+    recent: list[dict] = Field(default_factory=list)
+    checked_at: Optional[datetime] = None
+    error: str = ""
 
 
 class KnowledgeDoc(Doc):
@@ -210,6 +256,11 @@ class MetricSnapshot(Doc):
     clicks: int = 0
     ctr: float = 0
     cpc: float = 0
+    link_clicks: int = 0
+    landing_page_views: int = 0
+    conversations: int = 0
+    leads: int = 0
+    post_engagement: int = 0
     source: str = "meta"  # meta | simulated
     pulled_at: datetime = Field(default_factory=now)
 

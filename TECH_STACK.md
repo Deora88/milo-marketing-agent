@@ -182,6 +182,7 @@ workflows and add another service to run. It is listed as optional future work f
 | `OPTIMIZER_*` thresholds | see `.env.example` | Min impressions, pause / scale / trim ratios, budget step, max budget, cooldown |
 | `TAVILY_API_KEY` | — | Tavily key for ad research (optional; without it copy is written unresearched) |
 | `RESEARCH_ENABLED` | `true` | Turn web research on/off |
+| `LABS_ENABLED` / `LABS_AD_LIBRARY_COUNTRY` | `true` / `IN` | Trends prototype page on/off; country for the Ad Library link |
 | `RESEARCH_TIME_RANGE` | `month` | How recent results must be: `day`, `week`, `month`, `year` |
 | `RESEARCH_MAX_RESULTS` | `5` | Sources per search |
 | `META_APP_SECRET`, `META_APP_ID` | — | Check webhook signatures; tell Milo's own echoes apart |

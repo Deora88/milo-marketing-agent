@@ -1,7 +1,7 @@
 """Read-only endpoints for the dashboard: app status, summary KPIs and the audit log."""
 from collections import defaultdict
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from app.actions import total_live_budget
 from app.config import get_settings
@@ -35,9 +35,17 @@ def _dm_status(s, db_ok: bool) -> dict:
 
     return {"webhook_configured": bool(s.meta_app_secret and s.meta_webhook_verify_token),
             "agent_enabled": s.dm_agent_enabled, "autoreply": s.dm_autoreply, "business_name": s.dm_business_name,
+            "pdf_autoreply": s.dm_autoreply and s.dm_pdf_autoreply, "comment_autoreply": s.comment_autoreply,
+            "embeddings": _embeddings_on(s),
             "faq_count": store.count(FaqEntry, {"enabled": True}) if db_ok else 0,
             "page_token_set": bool(s.meta_page_access_token), "human_agent_enabled": s.meta_human_agent_enabled,
             "unread": store.count(InboundMessage, {"is_echo": False, "status": "new"}) if db_ok else 0}
+
+
+def _embeddings_on(s) -> bool:
+    from app.dm import embeddings
+
+    return embeddings.enabled(s)
 
 
 def _comments_unread(db_ok: bool) -> int:
@@ -63,6 +71,7 @@ def status():
         "meta_configured": bool(s.meta_access_token and s.meta_ad_account_id and s.meta_page_id),
         "instagram_account_set": bool(s.meta_instagram_account_id),
         "comments_unread": _comments_unread(db_state["ok"]),
+        "labs_enabled": s.labs_enabled,
         "posts": {  # Instagram posts: Meta downloads the media from PUBLIC_BASE_URL
             "public_base_url_set": s.public_base_url.startswith("https://"),
             "ready": s.meta_dry_run or s.public_base_url.startswith("https://"),
@@ -95,6 +104,17 @@ def status():
             "cooldown_hours": s.optimizer_cooldown_hours,
         },
     }
+
+
+@router.get("/analysis")
+def analysis_view(days: int = 7, campaign_id: int | None = None):
+    """This period vs the previous one, creatives compared; facts, calculations and assumptions kept apart."""
+    from app import analysis
+
+    try:
+        return analysis.analyze(campaign_id, days)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 @router.post("/optimizer/run")

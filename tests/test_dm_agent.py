@@ -38,7 +38,7 @@ def _areas_id():
 
 
 def test_sample_faq_loads_once():
-    assert agent.load_sample_faq() == 6
+    assert agent.load_sample_faq() == 12
     assert agent.load_sample_faq() == 0
     assert all(f.sample for f in store.find(FaqEntry))
 
@@ -70,6 +70,24 @@ def test_phone_number_is_saved_as_lead_without_the_model():
     assert done.agent_action == "lead"
     [lead] = store.find(Lead)
     assert lead.phone == "9876543210" and lead.customer_id == "psid_1"
+
+
+def test_phone_card_after_a_lead_gets_no_second_reply():
+    """Messenger adds a text-less phone-number card right after a typed number: the bot must not reply twice."""
+    s = _s(dm_autoreply=True)
+    first = _msg("Please call me back on 9876543210", mid="p1", hours_ago=0.01)
+    assert asyncio.run(agent.handle(first.id, settings=s, llm=_llm("unused"))).agent_action == "lead"
+    card = store.insert(InboundMessage(platform="messenger", page_id="999", sender_id="psid_1", recipient_id="999",
+                                       customer_id="psid_1", mid="p2", text="", sent_at=first.sent_at + timedelta(seconds=1)))
+    done = asyncio.run(agent.handle(card.id, settings=s, llm=_llm("unused")))
+    assert done.agent_action == "skipped" and "phone card" in done.agent_note
+    assert len(store.find(InboundMessage, {"is_echo": True})) == 1
+
+
+def test_lone_photo_still_goes_to_a_person():
+    m = store.insert(InboundMessage(platform="messenger", page_id="999", sender_id="psid_1", recipient_id="999",
+                                    customer_id="psid_1", mid="ph", text="", sent_at=now() - timedelta(minutes=1)))
+    assert asyncio.run(agent.handle(m.id, settings=_s(), llm=_llm("unused"))).agent_action == "handoff"
 
 
 def test_broken_model_output_is_a_safe_handoff():
@@ -107,10 +125,10 @@ def test_autoreply_respects_closed_window():
 
 def test_faq_and_leads_api(monkeypatch):
     c = TestClient(app, headers=WEB)
-    assert c.post("/api/faq/sample").json() == {"added": 6}
+    assert c.post("/api/faq/sample").json() == {"added": 12}
     f = c.post("/api/faq", json={"question": "Do you clean offices?", "answer": "Not yet, homes only."}).json()
     assert c.put(f"/api/faq/{f['id']}", json={"question": "Do you clean offices?", "answer": "Homes only."}).status_code == 200
-    assert len(c.get("/api/faq").json()) == 7
+    assert len(c.get("/api/faq").json()) == 13
     assert c.delete(f"/api/faq/{f['id']}").status_code == 200
     assert c.get("/api/leads").json() == []
     assert TestClient(app).post("/api/faq/sample").status_code == 403  # CSRF header required

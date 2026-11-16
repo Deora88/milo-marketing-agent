@@ -1,7 +1,8 @@
 """Meta webhook: Messenger and Instagram DMs to the Page, and comments on its Facebook / Instagram posts.
 
 Verify, store, answer fast. Nothing here can change an ad; the DM bot (app/dm/agent.py) handles stored messages
-after the 200, and comments wait in Milo for a person (app/social/comments.py).
+after the 200, and comments wait in Milo for a person, or with COMMENT_AUTOREPLY=true get an automatic answer
+from pre-written words after the 200 (app/social/comments.py).
 
 - GET  /webhooks/meta: Meta's subscribe check (hub.mode, hub.verify_token, hub.challenge).
 - POST /webhooks/meta: one or more events. The X-Hub-Signature-256 header must be the HMAC-SHA256 of the raw
@@ -167,7 +168,7 @@ async def receive(request: Request, background: BackgroundTasks):
                 new_inbound.append(old.id)  # stored earlier but never handled (e.g. restart after the 200)
     from app.social import comments
 
-    got = {"new": 0, "own": 0, "duplicate": 0, "updated": 0}
+    got = {"new": 0, "own": 0, "duplicate": 0, "updated": 0, "ids": []}
     try:
         got = comments.save_events(body)  # entry[].changes[]: Instagram "comments", Page "feed" comment items
     except Exception:  # noqa: BLE001 - a comment problem must never lose the DMs in the same delivery
@@ -184,4 +185,6 @@ async def receive(request: Request, background: BackgroundTasks):
         background.add_task(profiles.ensure_many, senders)
     if new_inbound and get_settings().dm_agent_enabled:
         background.add_task(_run_agent, new_inbound)
+    if got.get("ids") and get_settings().comment_autoreply and get_settings().dm_agent_enabled:
+        background.add_task(comments.auto_answer_many, got["ids"])
     return PlainTextResponse("EVENT_RECEIVED")

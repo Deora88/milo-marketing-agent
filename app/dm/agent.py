@@ -50,16 +50,31 @@ MAX_REPLY = 600  # the model's draft (a person reads it before sending)
 MAX_FAQ_REPLY = 1500
 MAX_FAQ_REPLY_IG_BYTES = 850  # Instagram allows under 1,000 bytes; leaves room for the disclosure line
 
-SAMPLE_FAQ = [  # sample answers for the demo home-cleaning business (same facts as its landing page)
-    ("Which areas do you cover?", "We cover Delhi, Noida, Greater Noida, Gurugram, Ghaziabad and Faridabad."),
-    ("What services do you offer?", "Full home deep cleaning, kitchen cleaning, bathroom cleaning, sofa and carpet "
-     "shampoo, move-in / move-out cleaning and post-renovation cleaning."),
-    ("How long does a deep clean take?", "Usually 3-4 hours for a 1 BHK, 5-6 hours for a 2 BHK and 6-7 hours for a "
-     "3 BHK. We confirm the exact time on call."),
-    ("Do you bring your own supplies?", "Yes. Our team brings the vacuum, scrubbers and all cleaning supplies."),
-    ("What are your timings?", "We work every day, 8 am to 8 pm."),
-    ("How do I book?", "Share your home size (1, 2 or 3 BHK), the service you need and your preferred date here, "
-     "and we'll confirm a slot and the price."),
+SAMPLE_FAQ = [  # sample answers for the demo business Bagicha Doctor (same facts as its PDF)
+    ('How much is a plant doctor visit?',
+     'A Plant Doctor home visit costs ₹349 for up to 10 plants, and ₹25 for every extra plant. First visit is ₹249 when booked on chat before 31 December 2026.'),
+    ('Is Plant ICU really free?',
+     'Yes. Send a photo of the sick plant on chat and a plant doctor replies within 2 hours between 8 AM and 9 PM. It is always free.'),
+    ('Which areas do you cover?',
+     'Ghaziabad (Indirapuram, Vaishali, Vasundhara, Kaushambi, Raj Nagar Extension, Crossings Republik) and Noida (Sectors 18, 50, 62, 75, 137 and Noida Extension). Other Delhi NCR areas have a ₹99 travel charge.'),
+    ('What does plant-sitting cost?',
+     '₹199 per visit with a photo after every visit. For trips of 7 days or more, the Holiday Pack is 3 visits a week for ₹499 per week.'),
+    ('How do I pay?',
+     'UPI (GPay, PhonePe, Paytm), cards or cash, after the visit. Balcony Makeover needs a 30% advance.'),
+    ('Are your sprays safe for pets and kids?',
+     'Yes. We use only organic neem-based sprays, safe for children and pets once dry, in about 30 minutes.'),
+    ('Can I cancel my booking?',
+     'Free cancellation or reschedule up to 2 hours before the visit. Late cancellations cost ₹100.'),
+    ('Do you work on Sundays?',
+     'Yes. Home visits run 8 AM to 7 PM, Monday to Sunday.'),
+    ('Do you sell plants and garden supplies?',
+     'Yes. The Bagicha Shop sells indoor, balcony, flowering and kitchen garden plants, plus fertilizers, potting mix, pots, tools and organic pest control.'),
+    ('What is the delivery charge?',
+     'Free in Ghaziabad and Noida on orders above ₹999, otherwise ₹79. Order before 2 PM for same-day delivery. Other Delhi NCR areas: next day, ₹149.'),
+    ('Which fertilizer should I use?',
+     'Vermicompost monthly (₹249 for 5 kg) plus Bagicha All-in-One plant food (₹329 per kg). For roses and flowering plants, add bone meal (₹179 per kg).'),
+    ('What if a plant I bought dies?',
+     'If a plant arrives damaged or dies within 7 days with normal care, we replace it free.'),
 ]
 
 
@@ -102,9 +117,11 @@ Business document passages (from the business's own PDFs):
 
 Reply with one JSON object and nothing else:
 {{"action": "answer" | "lead" | "handoff", "faq_ids": [FAQ ids you used], "doc_refs": [passage ids you used],
- "reply": "...", "name": "", "phone": ""}}
+ "quotes": ["exact sentences from those passages"], "reply": "...", "name": "", "phone": ""}}
 - "answer": the FAQ and/or passages fully cover the question. reply = 1-3 short friendly sentences using only
   them. Quote prices and terms exactly as written there.
+- "quotes": when you used passages, copy the 1-3 sentences that answer the question WORD FOR WORD from them
+  (no changes, no additions). Milo may send these exact words to the customer.
 """ + _PROMPT_TAIL
 
 
@@ -130,6 +147,8 @@ async def _default_llm(messages: list[dict]) -> str:
     return resp.choices[0].message.content or ""
 
 
+# Per-process state: Milo runs as ONE web process (one uvicorn worker). With several workers, these locks would
+# need to move to the database (store.claim already prevents double handling across processes).
 _locks: dict[tuple, asyncio.Lock] = {}
 
 
@@ -172,6 +191,41 @@ def mark_failed(message_id: int, where: str, exc: BaseException) -> None:
     store.audit("dm_agent_failed", message_id=message_id, where=where, error=note)
 
 
+_NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+
+def numbers(text: str) -> set[str]:
+    """Numbers in a text, written the same way ("1,299" = "1299", "499.00" = "499")."""
+    out = set()
+    for n in _NUMBER.findall(text or ""):
+        n = n.replace(",", "").rstrip(".")
+        out.add(n.split(".")[0] if re.fullmatch(r"\d+\.0+", n) else n)
+    return out
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"\s+", " ", text or "").strip().lower()
+
+
+def exact_quotes(quotes, passages: list[dict]) -> str:
+    """The model's quotes joined, if EVERY one appears word for word (ignoring case and spacing) in a cited
+    passage and is a real sentence (12+ characters); else "". One made-up quote = no exact answer."""
+    if not isinstance(quotes, list) or not quotes:
+        return ""
+    texts = [_norm(p["text"]) for p in passages]
+    good = []
+    for q in quotes[:3]:
+        if not isinstance(q, str) or len(_norm(q)) < 12 or not any(_norm(q) in t for t in texts):
+            return ""
+        good.append(re.sub(r"\s+", " ", q).strip())
+    return " ".join(good)
+
+
+def exact_source(passages: list[dict]) -> str:
+    names = sorted({p["filename"].rsplit(".", 1)[0].replace("_", " ") for p in passages})
+    return names[0] if len(names) == 1 else "documents"
+
+
 def _handoff_text(business: str) -> str:
     return f"Thanks for your message! A member of the {business} team will reply here soon."
 
@@ -190,7 +244,7 @@ async def decide(msg: InboundMessage, settings: Settings | None = None, llm: LLM
         why = ("mentioned you in their Instagram story" if (msg.story or {}).get("kind") == "mention"
                else "no text (sticker, photo or attachment)")
         return {"action": "handoff", "reply": "", "faq_ids": [], "note": why}
-    docs = knowledge.search(text)  # a database error here is a failure (visible), not a "model unavailable"
+    docs = await knowledge.hybrid_search(text)  # a database error here is a failure (visible), not "model unavailable"
     try:
         raw = await asyncio.wait_for((llm or _default_llm)([
             {"role": "system", "content": _system_prompt(s.dm_business_name, faq, docs)},
@@ -215,12 +269,23 @@ async def decide(msg: InboundMessage, settings: Settings | None = None, llm: LLM
         by_id = {f.id: f for f in faq}
         sources = [f"FAQ {', '.join(map(str, ids))}"] if ids else []
         sources += sorted({f"PDF {found[r]['filename']} p.{found[r]['page']}" for r in refs})
-        if refs:  # a PDF was used: a person checks and sends it, never auto-sent
-            return {"action": "answer", "reply": reply, "faq_ids": ids, "doc_refs": refs, "draft_only": True,
-                    "note": "; ".join(sources)}
-        faq_reply = faq_text([by_id[i] for i in dict.fromkeys(ids)], platform=msg.platform)  # stored text, whole
-        return {"action": "answer", "reply": reply, "faq_reply": faq_reply, "faq_ids": ids,
-                "note": "; ".join(sources)}
+        source_text = " ".join([by_id[i].answer for i in ids] + [found[r]["text"] for r in refs])
+        unknown = sorted(numbers(reply) - numbers(source_text))
+        check = f"check: {', '.join(unknown)} not in the cited source" if unknown else ""
+        faq_part = faq_text([by_id[i] for i in dict.fromkeys(ids)], platform=msg.platform) if ids else ""
+        if refs:  # a PDF was used: only its exact sentences may go out automatically
+            exact = exact_quotes(out.get("quotes"), [found[r] for r in refs])
+            pdf_part = f"From our {exact_source([found[r] for r in refs])}: {exact}" if exact else ""
+            both = " ".join(x for x in (faq_part, pdf_part) if x)
+            sendable = bool(pdf_part and (faq_part or not ids) and len(both) <= MAX_REPLY)
+            why = ("" if sendable else "the quoted sentences don't match the PDF word for word" if not exact
+                   else "the exact answer is too long to send whole")
+            return {"action": "answer", "reply": reply, "faq_ids": ids, "doc_refs": refs,
+                    "faq_reply": both if sendable else "", "exact": sendable,
+                    "draft_only": not (sendable and s.dm_pdf_autoreply),
+                    "note": "; ".join(x for x in (*sources, check, why) if x)}
+        return {"action": "answer", "reply": reply, "faq_reply": faq_part, "faq_ids": ids, "exact": bool(faq_part),
+                "note": "; ".join(x for x in (*sources, check) if x)}
     if action == "lead":
         given = PHONE.search(str(out.get("phone") or ""))  # model output is untrusted: keep only a real number
         phone = re.sub(r"[\s-]", "", given.group(0)) if given else ""
@@ -252,7 +317,13 @@ async def handle(message_id: int, settings: Settings | None = None, llm: LLM | N
                 return await asyncio.wait_for(_handle_claimed(claimed, s, llm, client, force), timeout=RUN_TIMEOUT)
             except TimeoutError:
                 log.error("dm agent: message %s took longer than %ss, stopped", message_id, RUN_TIMEOUT)
-                mark_failed(message_id, "agent", TimeoutError(f"bot run took longer than {RUN_TIMEOUT}s"))
+                current = store.get(InboundMessage, message_id)
+                if current is not None and current.send_started_at is not None:  # cut off while Meta was sending
+                    mark_failed(message_id, "send", TimeoutError(
+                        "timed out while sending; the reply may already have been delivered: check the "
+                        "conversation before answering"))
+                else:
+                    mark_failed(message_id, "agent", TimeoutError(f"bot run took longer than {RUN_TIMEOUT}s"))
                 return store.get(InboundMessage, message_id)
             except Exception as exc:
                 log.exception("dm agent failed for message %s", message_id)
@@ -278,11 +349,36 @@ def _others(msg: InboundMessage) -> list[InboundMessage]:
     return [m for m in inbox.thread_messages(msg.platform, msg.page_id, msg.customer_id) if m.id != msg.id]
 
 
+FOLLOW_UP_WINDOW = timedelta(seconds=90)
+
+
+def _auto_follow_up(msg: InboundMessage, others: list[InboundMessage]) -> str:
+    """A text-less message right after one the bot already answered, e.g. the phone-number card Messenger adds by
+    itself when a customer types a number. Replying to it would send a second, confusing message."""
+    if (msg.text or "").strip() or (msg.story or {}).get("kind") == "mention" or msg.kind == "postback":
+        return ""
+    t = msg.sent_at or msg.received_at
+    for m in others:
+        mt = m.sent_at or m.received_at
+        if (not m.is_echo and m.agent_action in ("answer", "lead") and mt and t
+                and timedelta(0) <= _aware(t) - _aware(mt) <= FOLLOW_UP_WINDOW):
+            return f"no text, sent right after message {m.id} that the bot already handled (e.g. Messenger's phone card)"
+    return ""
+
+
+def _aware(d):
+    from datetime import timezone
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
 async def _handle_claimed(msg: InboundMessage, s: Settings, llm: LLM | None, client, force: bool) -> InboundMessage:
     hold = "" if force else inbox.bot_hold(_others(msg), s)
     if hold:  # the note says why (e.g. which app sent the Page reply), for checking live conversations
         _save_lead_quietly(msg)
         return store.update(InboundMessage, msg.id, {"agent_action": "skipped", "agent_note": f"stayed out: {hold}"[:300]})
+    follow = "" if force else _auto_follow_up(msg, _others(msg))
+    if follow:
+        return store.update(InboundMessage, msg.id, {"agent_action": "skipped", "agent_note": follow[:300]})
 
     d = await decide(msg, s, llm)
     send_faq_text = s.dm_autoreply and d["action"] == "answer" and not d.get("draft_only")
@@ -315,8 +411,9 @@ async def _handle_claimed(msg: InboundMessage, s: Settings, llm: LLM | None, cli
     if not s.dm_autoreply:
         return msg
     if d.get("draft_only"):  # answer from a PDF: a person reads the draft and sends it from the Inbox
-        return store.update(InboundMessage, msg.id, {"agent_note": f"{msg.agent_note}; draft only (from a PDF), "
-                                                                   "a person sends it"[:300]})
+        why = "DM_PDF_AUTOREPLY is off" if d.get("exact") else "not an exact quote"
+        return store.update(InboundMessage, msg.id, {"agent_note": f"{msg.agent_note}; draft only (from a PDF, "
+                                                                   f"{why}), a person sends it"[:300]})
     others = _others(msg)  # look again right before sending: a person may have replied during the model call
     if not force and inbox.person_owns(others, s):
         return store.update(InboundMessage, msg.id, {"agent_note": f"{msg.agent_note}; not sent: a person replied "
@@ -324,9 +421,11 @@ async def _handle_claimed(msg: InboundMessage, s: Settings, llm: LLM | None, cli
     text = msg.suggested_reply
     if not any(m.is_echo and m.sent_by == "agent" for m in others):  # first bot message: disclose
         text = f"Hi! I'm the automated assistant for {s.dm_business_name}. {text}"
+    store.update(InboundMessage, msg.id, {"send_started_at": now()})  # so a timeout here says "may be sent"
     try:
-        await inbox.send_reply(msg.platform, msg.page_id, msg.customer_id, text, sent_by="agent",
-                               client=client, settings=s)
+        # shielded: if the run's time limit fires mid-send, the send still finishes and stores the outbound row
+        await asyncio.shield(inbox.send_reply(msg.platform, msg.page_id, msg.customer_id, text, sent_by="agent",
+                                              client=client, settings=s))
     except inbox.ReplyError as exc:  # refused by Milo's rules (window closed...): expected, not an error
         log.warning("dm agent: reply not sent for message %s: %s", msg.id, exc)
         return store.update(InboundMessage, msg.id, {"agent_note": f"{msg.agent_note}; not sent: {exc}"[:300]})

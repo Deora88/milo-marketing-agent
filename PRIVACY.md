@@ -1,6 +1,6 @@
 # Milo — Privacy Policy and Terms
 
-_Last updated: 2 November 2026_
+_Last updated: 6 November 2026_
 
 Milo is a student internship project: an AI marketing assistant that drafts and (after human approval) publishes
 Meta ad campaigns and Instagram posts, and answers Messenger and Instagram direct messages for the business that
@@ -35,10 +35,14 @@ profile beyond the name/username above, and it uses no Facebook Login for visito
 - **OpenRouter** (the AI model provider) — the owner's chat messages, and incoming DMs with the business's FAQ
   and document text, so the model can write a reply.
 - **Tavily** — web search queries for ad research (no personal data).
-- **Cloudflare Workers AI** — image prompts (a scene description, no personal data) for AI images.
+- **Cloudflare Workers AI** — image prompts (a scene description, no personal data) for AI images; and, when
+  meaning-based document search is on, the text of business documents and of each incoming message or comment, to
+  turn it into an embedding (numbers used for search). Cloudflare states zero data retention for this model;
+  Milo stores the document embeddings, never the message's.
 
 ## Where data is stored
-Campaigns, approvals, metrics, posts, DMs, sender names, leads, document text and the activity log are stored in
+Campaigns, approvals, metrics, posts, DMs, sender names, leads, document text (and its search embeddings) and the
+activity log are stored in
 the business's MongoDB database (MongoDB Atlas). Ad and post images and Reel videos are stored in the local
 `data/` folder. Access tokens and API keys stay in a local `.env` file; they are never sent to the browser or to
 any service other than the one they belong to.

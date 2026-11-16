@@ -20,6 +20,8 @@ FONT_DIR = Path(__file__).parent / "fonts"  # Plus Jakarta Sans (SIL Open Font L
 BRAND = (242, 84, 45)  # #F2542D, the Milo brand orange
 OVERLAY_LIMITS = {"headline": 60, "details": 90, "cta": 30}
 MAX_UPLOAD = 8 * 1024 * 1024
+MAX_PIXELS = 40_000_000  # ~ 8000 x 5000; a small file can still decode to a huge image (decompression bomb)
+Image.MAX_IMAGE_PIXELS = MAX_PIXELS  # Pillow's own guard for every image Milo opens (its default is ~178 M)
 FEED_W = 1080
 STORY = (1080, 1920)
 SECONDS_PER_IMAGE = 3
@@ -35,7 +37,13 @@ def _open(data: bytes) -> Image.Image:
         raise MediaError("Image is larger than 8 MB.")
     try:
         img = Image.open(io.BytesIO(data))
+        if img.width * img.height > MAX_PIXELS:  # checked from the header, before decoding the pixels
+            raise MediaError(f"Image is too large ({img.width} x {img.height}). Use one under 40 megapixels.")
         img.load()
+    except MediaError:
+        raise
+    except Image.DecompressionBombError as exc:  # Pillow's own guard (more than twice MAX_PIXELS)
+        raise MediaError("Image is too large. Use one under 40 megapixels.") from exc
     except Exception as exc:  # noqa: BLE001 - any unreadable file
         raise MediaError("That file is not an image Milo can read (use JPG or PNG).") from exc
     img = ImageOps.exif_transpose(img)  # phone photos: apply the rotation flag

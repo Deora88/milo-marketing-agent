@@ -89,7 +89,11 @@ async def generate_for_campaign(campaign_id: int, subject: str = "", source: str
     IMAGE_DIR.mkdir(parents=True, exist_ok=True)
     path = IMAGE_DIR / f"campaign-{c.id}.jpg"
     path.write_bytes(data)
+    from app import campaign_state
+
+    before = c.model_copy(deep=True)
     c.image_path, c.meta_image_hash = str(path), None
     store.save(c)
+    campaign_state.record_image(before, c, source, "image generated (FLUX.1 schnell)")
     store.audit("image_generated", campaign_id=c.id, source=source, prompt=prompt[:300], bytes=len(data))
     return c

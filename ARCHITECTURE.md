@@ -313,6 +313,9 @@ flowchart TD
 | `app/approvals.py` | Creates pending approvals: status rules, budget caps, Instagram image check, spend switch for resume, updates a waiting request with new details, audit |
 | `app/creative/imagegen.py` | Ad image generation: FLUX.1 [schnell] on Cloudflare Workers AI (`@cf/black-forest-labs/flux-1-schnell`); adds "no text, no logos" to prompts, daily cap, saves the JPEG on the draft, audits `image_generated` |
 | `app/research/tavily.py` | Tavily client: `search_recent()` (time-limited search, http(s) only, trimmed snippets) and `extract_page()` (https landing page, trimmed); `ResearchUnavailable` when off, no key or out of credits |
+| `app/campaign_state.py` | Draft rules shared by create / edit, the requirements checklist (known / assumed / missing), and version history |
+| `app/labs/` | Trends page prototype (code name "labs"): own-account patterns, upcoming moments, competitor watch (Business Discovery), Ad Library link |
+| `app/analysis.py` | Period-over-period and creative comparison; facts, calculations (formula + inputs) and assumptions kept apart |
 | `app/optimizer.py` | Rule-based optimization loop: `analyze()` (pure rules) + `run_optimizer()` (cooldowns, files approvals) |
 | `app/actions.py` | Executes approved actions against Meta — the only code that writes to Meta; keeps ads paused while spending is off; ignores dry-run ids in live mode |
 | `app/agent/agent.py` | Builds `LlmAgent` with LiteLLM model and `McpToolset` (starts the MCP server) |
@@ -375,6 +378,14 @@ Design tokens (warm paper palette, Fraunces headings, Outfit body) live in `web/
 erDiagram
     CAMPAIGN ||--o{ APPROVAL : "has"
     CAMPAIGN ||--o{ METRICSNAPSHOT : "has"
+    CAMPAIGN ||--o{ CAMPAIGNVERSION : "versions"
+    CAMPAIGNVERSION {
+        int campaign_id FK
+        int version
+        json snapshot "ad, targeting, budget"
+        json changes "field: from -> to"
+        string source "agent, user, approval"
+    }
     CAMPAIGN {
         int id PK
         string name

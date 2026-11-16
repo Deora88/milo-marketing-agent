@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     # dm_autoreply=false (default): it drafts a reply in the Inbox and a person clicks Send.
     dm_agent_enabled: bool = True
     dm_autoreply: bool = False
+    # With DM_AUTOREPLY=true: also send answers from business PDFs automatically, but only as the PDF's own
+    # sentences, checked word for word in code ("From our price list: ..."). false = PDF answers stay drafts.
+    dm_pdf_autoreply: bool = False
+    # Public comments: answer automatically from the FAQ or exact PDF sentences; a comment with a phone number gets
+    # "please DM us" and is hidden; anything else waits for a person. Off by default (replies are public).
+    comment_autoreply: bool = False
     # A bot hand-off (question not in the FAQ) keeps the bot out of that conversation for this many hours, then
     # it may answer FAQ questions again. A person replying as the Page keeps it out until "Hand back to bot".
     dm_handoff_hours: int = 24
@@ -70,6 +76,14 @@ class Settings(BaseSettings):
     optimizer_min_ctr_pct: float = 0.6  # with a single campaign, pause below this CTR
     optimizer_cooldown_hours: int = 6  # one recommendation per campaign per window (Meta: 4 budget edits/hour)
 
+    # Trends page (prototype; code name "labs"). false hides the page, its API and the agent tool.
+    labs_enabled: bool = True
+    labs_ad_library_country: str = "IN"  # country for the Ad Library link
+    # Hashtag trends need Meta's "Instagram Public Content Access" (verified Meta business + Tech Provider + App
+    # Review). Leave false until Meta approves; the card then shows clearly labelled sample posts.
+    labs_hashtags_live: bool = False
+    labs_default_hashtag: str = "carwash"
+
     # Web research for ad copy (Tavily). Read-only; "recent context", not search-volume trends.
     tavily_api_key: str = ""
     research_enabled: bool = True
@@ -86,6 +100,10 @@ class Settings(BaseSettings):
     image_model: str = "@cf/black-forest-labs/flux-1-schnell"
     image_steps: int = 4  # 1-8; more = slower, slightly better
     image_daily_limit: int = 40  # keeps well inside the free allowance (~150 images/day)
+    # PDF search for the DM / comment bot: meaning-based search with Cloudflare's bge-m3 embeddings (same account
+    # as images), merged with keyword search. false, or no Cloudflare settings = keyword search (BM25) only.
+    knowledge_embeddings: bool = True
+    knowledge_min_similarity: float = 0.45  # passages less alike than this are not shown to the bot
 
     # Database: MongoDB (Atlas or local). "mongomock://" = in-memory, for tests only.
     mongodb_uri: str = "mongodb://localhost:27017"

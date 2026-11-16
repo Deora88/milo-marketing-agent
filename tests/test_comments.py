@@ -153,5 +153,5 @@ def test_own_comments_show_only_under_all_and_log_line_says_what_came():
     assert comments.describe(ig_comment()) == "instagram: changes comments x1"
     assert comments.describe({"object": "page", "entry": [{"messaging": [{"read": {}}]}]}) == "page: read x1"
     got = comments.save_events(ig_comment(cid="1811"))
-    assert got == {"new": 1, "own": 0, "duplicate": 0, "updated": 0}
+    assert got == {"new": 1, "own": 0, "duplicate": 0, "updated": 0, "ids": [got["ids"][0]]}
     assert comments.save_events(ig_comment(cid="1811"))["duplicate"] == 1

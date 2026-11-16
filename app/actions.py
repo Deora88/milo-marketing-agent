@@ -124,7 +124,12 @@ async def execute(approval: Approval, client: MetaClient | None = None) -> Campa
             if err:
                 raise ValueError(err)
             await meta.update_budget(client, c, new)
+            from app import campaign_state
+
+            before = campaign_state.snapshot(c)
             c.daily_budget = new
+            store.save(c)
+            campaign_state.record_version(before, c, "approval", f"budget change approved (approval {approval.id})")
         else:
             raise ValueError(f"unknown action {approval.action}")
     finally:

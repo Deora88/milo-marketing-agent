@@ -23,6 +23,7 @@ from app.util.redact import redact
 
 POLL_SECONDS = 5
 POLL_LIMIT = 60  # 5 minutes for a video to be processed
+STUCK_AFTER = timedelta(minutes=30)  # longer than any real publish (video processing waits up to 5 min)
 MISSED_AFTER = timedelta(hours=6)  # Milo was off at the approved time: don't post a stale offer by surprise
 log = logging.getLogger("milo.posts")
 
@@ -46,10 +47,14 @@ async def _wait_ready(client: MetaClient, container: str, token: str, sleep=asyn
 async def publish(post_id: int, client: MetaClient | None = None, sleep=asyncio.sleep) -> SocialPost:
     """Publish now. The post must already be approved (status scheduled or pending_approval -> publishing)."""
     p = store.claim(SocialPost, post_id, {"status": {"$in": ["pending_approval", "scheduled"]}},
-                    {"status": "publishing", "error": ""})
+                    {"status": "publishing", "error": "", "publishing_started_at": now()})
     if p is None:
         current = store.get(SocialPost, post_id)
         raise PublishError(f"Post is {current.status if current else 'missing'}; it can't be published now.")
+    if p.meta_mode == "live" and p.meta_media_id:  # already on Instagram (an earlier run published it): never twice
+        store.audit("post_publish_skipped", post_id=p.id, reason="already on Instagram", media_id=p.meta_media_id)
+        return store.update(SocialPost, p.id, {"status": "published", "published_at": p.published_at or now(),
+                                               "error": ""})
     own = client is None
     client = client or MetaClient()
     s = client.s
@@ -86,6 +91,8 @@ async def publish(post_id: int, client: MetaClient | None = None, sleep=asyncio.
         await _wait_ready(client, creation, token, sleep)
         published = await client.post(f"/{ig}/media_publish", token=token, creation_id=creation)
         media_id = str(published.get("id") or "")
+        if media_id:  # it is live now: save the id first, so no failure below can lead to a second publish
+            store.update(SocialPost, p.id, {"meta_media_id": media_id, "meta_mode": "live"})
         link = ""
         if media_id:
             try:
@@ -97,12 +104,44 @@ async def publish(post_id: int, client: MetaClient | None = None, sleep=asyncio.
                                                "permalink": link, "published_at": now()})
     except Exception as exc:
         note = f"{type(exc).__name__}: {redact(exc)}"[:300]
-        store.update(SocialPost, p.id, {"status": "failed", "error": note})
-        store.audit("post_failed", post_id=p.id, error=note)
+        try:
+            current = store.get(SocialPost, p.id)
+            if current and current.meta_mode == "live" and current.meta_media_id:  # live on Instagram already
+                store.update(SocialPost, p.id, {"status": "published", "published_at": current.published_at or now(),
+                                                "error": f"Posted, but Milo hit an error afterwards: {note}"[:300]})
+                store.audit("post_published", post_id=p.id, kind=p.kind, mode="live", media_id=current.meta_media_id,
+                            note="saved after an error")
+                return store.get(SocialPost, p.id)  # it is live: report success, never invite a retry
+            else:
+                store.update(SocialPost, p.id, {"status": "failed", "error": note})
+                store.audit("post_failed", post_id=p.id, error=note)
+        except Exception:  # noqa: BLE001 - e.g. the database is down; fail_stuck_posts cleans up later
+            log.exception("could not record the result of post %s", p.id)
         raise
     finally:
         if own:
             await client.aclose()
+
+
+def fail_stuck_posts(older_than: timedelta = STUCK_AFTER) -> list[int]:
+    """Posts left in "publishing" (Milo stopped or crashed mid-publish) can't be retried, edited or deleted.
+    Move them on: "published" if Instagram returned a media id, otherwise "failed" with a note to check Instagram
+    first, since the post may already be live. Runs at startup (older_than=0) and every few minutes."""
+    done = []
+    cutoff = now() - older_than
+    for p in store.find(SocialPost, {"status": "publishing"}):
+        started = p.publishing_started_at
+        if started is not None and started > cutoff:
+            continue  # still running
+        if p.meta_mode == "live" and p.meta_media_id:
+            changes = {"status": "published", "published_at": p.published_at or now(), "error": ""}
+        else:
+            changes = {"status": "failed", "error": "Publishing was interrupted (Milo stopped or crashed). Check "
+                                                     "Instagram before retrying: the post may already be live."}
+        if store.claim(SocialPost, p.id, {"status": "publishing"}, changes):
+            store.audit("post_recovered", post_id=p.id, status=changes["status"])
+            done.append(p.id)
+    return done
 
 
 async def publish_due(sleep=asyncio.sleep) -> list[int]:

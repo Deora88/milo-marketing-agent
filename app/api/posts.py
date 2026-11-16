@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -86,7 +87,7 @@ async def upload_image(post_id: int, file: UploadFile):
     """JPG or PNG, max 8 MB. Stored as JPEG; sized for the post type when publish is requested."""
     data = await file.read(posts.media.MAX_UPLOAD + 1)
     try:
-        return _out(_call(posts.add_image, post_id, data))
+        return _out(await run_in_threadpool(_call, posts.add_image, post_id, data))  # Pillow off the event loop
     except posts.media.MediaError as exc:
         raise HTTPException(415, str(exc)) from exc
 

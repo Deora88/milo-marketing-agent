@@ -46,7 +46,9 @@ def test_whole_run_has_a_hard_limit(monkeypatch):
         return json.dumps({"action": "answer", "faq_ids": [fid], "reply": "x"})
     m = _customer("Which areas?", "m1")
     done = asyncio.run(agent.handle(m.id, settings=s, llm=llm, client=SlowMeta()))
-    assert done.agent_action == "failed" and "took longer" in done.agent_note
+    # cut off while Meta was sending (PR #3 review): flagged for a person, and the note warns it may be sent
+    assert done.agent_action == "failed" and "may already have been delivered" in done.agent_note
+    assert done.send_started_at is not None
     assert agent._locks == {}  # the lock was released
 
 
