@@ -229,7 +229,6 @@
     </a>
     <nav class="flex flex-col gap-1" id="desktopNav" aria-label="Main"></nav>
     <div class="mt-auto flex flex-col gap-2 px-1">
-      <div id="userBox" class="hidden rounded-xl border border-line bg-surface px-3 py-2 text-xs"></div>
       <span id="modePill" class="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1 text-[11px] text-muted"></span>
       <span id="connPill" class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-medium bg-bg text-muted">Connecting…</span>
       <p class="rounded-xl bg-ok/10 p-3 text-xs leading-relaxed text-ok"><strong>Nothing goes live</strong> without your tap. Milo drafts and asks first.</p>
@@ -261,6 +260,7 @@
   </div>
 
   <main class="min-w-0 flex-1 px-4 py-6 pb-10 sm:px-6 lg:px-10 lg:py-8"><div class="mx-auto max-w-[1280px]">
+    <div id="userBox" class="mb-4 hidden justify-end"></div>
     <!-- ============ DASHBOARD ============ -->
     <section id="view-dashboard" class="view hidden">
       <!-- First screen: greeting, chat box and the one most urgent thing. Everything else is below the fold. -->
@@ -597,11 +597,14 @@
   function renderUserBox() {
     const u = state.user, box = $("userBox");
     if (!u) return;
-    box.classList.remove("hidden");
-    box.innerHTML = `<div class="flex items-center justify-between gap-2"><span class="min-w-0 truncate text-sm font-semibold text-ink" title="${esc(u.email)}">${esc(u.name)}</span>
-      <span class="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${u.role === "admin" ? "bg-ok/10 text-ok" : "bg-blue-50 text-blue-700"}">${u.role === "admin" ? "Admin" : "Editor"}</span></div>
-      <div class="mt-1 flex items-center justify-between gap-2"><span class="min-w-0 truncate text-[11px] text-muted">${esc(u.email)}</span>
-      <button type="button" id="signOutBtn" class="shrink-0 text-[11px] font-medium text-accent hover:underline">Sign out</button></div>`;
+    box.classList.remove("hidden"); box.classList.add("flex");
+    const admin = u.role === "admin";
+    box.innerHTML = `<div class="flex items-center gap-2 rounded-full border border-line bg-surface p-1 pr-3 shadow-sm" title="${esc(u.email)}">
+      <span class="grid size-8 shrink-0 place-items-center rounded-full bg-brand text-sm font-bold text-white" aria-hidden="true">${esc((u.name || u.email).charAt(0).toUpperCase())}</span>
+      <span class="max-w-[400px] truncate text-sm font-semibold text-ink">${esc(u.name)}</span>
+      <span class="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${admin ? "bg-ok/10 text-ok" : "bg-blue-50 text-blue-700"}">${admin ? "Admin" : "Editor"}</span>
+      <span class="text-subtle" aria-hidden="true">·</span>
+      <button type="button" id="signOutBtn" class="shrink-0 text-xs font-medium text-accent hover:underline">Sign out</button></div>`;
     $("signOutBtn").onclick = signOut;
   }
   // true = go on and load the app; false = the sign-in page is showing
