@@ -539,8 +539,10 @@ With `AUTH_REQUIRED=true` (the default) Milo asks everyone to sign in.
   and *request* a change. Only an **admin** can approve or reject, and add or change users. The server checks
   the role on every request (`app/security.py`); the UI hiding a button is only cosmetic.
 - **Who did it:** approvals show "Requested by" and "Approved / Rejected by", and Activity rows carry `by`.
-- **Add a user:** `uv run python scripts/add_user.py someone@example.com --role editor --name "Priya"`
-  (or `POST /api/auth/users` as an admin). `--reset-password` changes a password and signs that person out.
+- **Manage users** with `scripts/add_user.py` (or the `/api/auth/users` API as an admin):
+  `someone@example.com --role editor --name "Priya"` adds a user, `--set-role admin` changes a role,
+  `--reset-password` sets a new password, `--disable` / `--enable` blocks or allows sign-in, `--list` shows everyone.
+  Any change signs that person out; Milo always keeps at least one active admin.
 - **How it is stored:** passwords as salted scrypt hashes; a session is a random id in an `HttpOnly`,
   `SameSite=Strict` cookie, and only its SHA-256 is saved. Five wrong tries lock sign-in for 15 minutes.
 - **Limits of this version:** two roles, no Users page yet, and requests made by the chat agent are recorded
