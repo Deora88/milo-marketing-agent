@@ -366,7 +366,7 @@ FastAPI serves it at `/`, so it calls `/api/*` on the same origin: no CORS, no s
 | `#analytics` | 7-day totals, spend + clicks chart, per-campaign table, grounded analysis | `/api/summary`, per-campaign metrics | — |
 | `#activity` | Audit log | `/api/audit` | — |
 | `#settings` | Setup checklist and harness rules | `/api/status` | — |
-| `#users` | Admins only: people grouped by role (Can approve / Can request / No access), Editor \| Admin switch, add person, new password, access on/off | `/api/auth/users` | `POST /api/auth/users`, `PATCH /api/auth/users/{id}` |
+| `#users` | Admins only: sign-off flow (editor prepares → admin decides → Milo publishes), Admins and Editors panels with what each role can do, Make admin / Make editor, add person, new password, access on/off | `/api/auth/users` | `POST /api/auth/users`, `PATCH /api/auth/users/{id}` |
 
 With `AUTH_REQUIRED=true` a sign-in page (or "create the first admin" on first run) comes before every screen. The
 Users link and page are shown only to admins, and Approve / Reject only to admins; the server enforces both.

@@ -557,10 +557,11 @@ With `AUTH_REQUIRED=true` (the default) Milo asks everyone to sign in.
   and *request* a change. Only an **admin** can approve or reject, and add or change users. The server checks
   the role on every request (`app/security.py`); the UI hiding a button is only cosmetic.
 - **Who did it:** approvals show "Requested by" and "Approved / Rejected by", and Activity rows carry `by`.
-- **Users page** (admins only, sidebar → Users): people are grouped into *Can approve* (admins) and *Can request*
-  (editors). Each row has an Editor | Admin switch; **More** sets a new password or turns off access; **Add person**
-  adds someone. People with access turned off are listed under *No access*. Editors don't see the page, and the
-  server refuses `/api/auth/users` for them.
+- **Users page** (admins only, sidebar → Users): the top shows how sign-off works (editor prepares → admin
+  decides → Milo publishes) with the people in each role. Below, an **Admins** and an **Editors** panel list what
+  each role can and can't do, and the people in it. **Make admin / Make editor** changes a role, **More** sets a new
+  password or turns off access, and **Add person** (or "Add an editor" in an empty panel) adds someone. People with
+  access turned off are under *No access*. Editors don't see the page, and the server refuses `/api/auth/users` for them.
 - **From the command line** with `scripts/add_user.py` (or the `/api/auth/users` API as an admin):
   `someone@example.com --role editor --name "Priya"` adds a user, `--set-role admin` changes a role,
   `--reset-password` sets a new password, `--disable` / `--enable` blocks or allows sign-in, `--list` shows everyone.
