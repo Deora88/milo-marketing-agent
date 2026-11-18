@@ -1,4 +1,5 @@
 """Milo backend: FastAPI serves the API and the dashboard (web/)."""
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -7,7 +8,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api import approvals, campaigns, chat, insights
+from app.api import (approvals, auth, campaigns, chat, comments, faq, inbox, insights, instagram, knowledge, labs,
+                     posts, webhooks)
 from app.config import get_settings
 from app.db.store import init_db
 from app.jobs import scheduler
@@ -25,24 +27,49 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # noqa: BLE001 - start anyway; Settings shows the database error
         logging.getLogger("milo").error("MongoDB not reachable (%s). Check MONGODB_URI and Atlas Network Access.",
                                         redact(exc))
+    s = get_settings()
+    if (s.public_base_url.startswith("https://") or s.meta_app_secret) and not s.api_token:
+        logging.getLogger("milo").warning(
+            "Milo is reachable through a public tunnel (PUBLIC_BASE_URL / webhook set) and API_TOKEN is empty: the "
+            "tunnel guard allows only /webhooks/ and /media/ from it; use the dashboard at http://localhost:8000.")
+    if s.dm_agent_enabled:
+        try:  # DMs stored before a restart but never handled by the agent
+            from app.api.webhooks import _run_agent
+            from app.dm.agent import recover_unprocessed
+
+            ids = recover_unprocessed()
+            if ids:  # keep a reference: asyncio only holds tasks weakly, an unreferenced one can be collected
+                app.state.dm_recovery_task = asyncio.get_running_loop().create_task(_run_agent(ids, draft_only=True))
+        except Exception:  # noqa: BLE001 - start anyway
+            logging.getLogger("milo").exception("could not recover unhandled DMs")
     scheduler.start()
     yield
     scheduler.scheduler.shutdown(wait=False)
 
 
 app = FastAPI(title="Milo", version="0.1.0", lifespan=lifespan)
+app.include_router(auth.router)
 app.include_router(chat.router)
 app.include_router(campaigns.router)
 app.include_router(approvals.router)
 app.include_router(insights.router)
+app.include_router(webhooks.router)
+app.include_router(inbox.router)
+app.include_router(faq.router)
+app.include_router(knowledge.router)
+app.include_router(instagram.router)
+app.include_router(posts.router)
+app.include_router(posts.public)
+app.include_router(comments.router)
+app.include_router(labs.router)
 
 # The UI in web/ is served from this same origin, so browsers need no CORS.
 # Allowed origins only matter for a separate local dev server (e.g. a frontend on another port).
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=get_settings().cors_origin_regex,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allow_headers=["Content-Type", "Authorization", "X-Milo-Client"],
 )
 
 

@@ -10,7 +10,7 @@ from typing import Any, Optional
 from app.db import store
 from app.mcp_server.server import TOOL_NAMES
 
-REQUEST_TOOLS = {"request_publish", "request_pause", "request_budget_change"}
+REQUEST_TOOLS = {"request_publish", "request_pause", "request_budget_change", "request_post_publish"}
 
 
 def tool_guard(tool: Any, args: dict[str, Any], tool_context: Any) -> Optional[dict]:

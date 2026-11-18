@@ -1,0 +1,15 @@
+# never send secrets or local state into the image
+.env
+.env.*
+!.env.example
+.git
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+data
+tests
+Claude outputs
+*.md
+!README.md

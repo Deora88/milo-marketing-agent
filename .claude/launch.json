@@ -6,6 +6,12 @@
       "runtimeExecutable": ".venv\\Scripts\\python.exe",
       "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--reload", "--port", "8000"],
       "port": 8000
+    },
+    {
+      "name": "milo-safe-preview",
+      "runtimeExecutable": ".venv\\Scripts\\python.exe",
+      "runtimeArgs": ["-c", "import os; os.environ.update(MILO_ENV_FILE='', LITELLM_MODE='PRODUCTION', MONGODB_URI='mongomock://', MONGODB_DB='milo_preview', META_DRY_RUN='true', META_ALLOW_SPEND='false', DM_AGENT_ENABLED='false'); import uvicorn; uvicorn.run('app.main:app', port=8010)"],
+      "port": 8010
     }
   ]
 }

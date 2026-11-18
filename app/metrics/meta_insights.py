@@ -6,6 +6,22 @@ from app.meta.client import MetaClient
 from app.metrics.base import DailyMetrics
 
 MAX_PAGES = 20
+# Meta "actions" types -> DailyMetrics fields (Meta's default attribution: 7-day click, 1-day view)
+ACTIONS = {"landing_page_view": "landing_page_views",
+           "onsite_conversion.messaging_conversation_started_7d": "conversations",
+           "lead": "leads", "onsite_conversion.lead_grouped": "leads", "post_engagement": "post_engagement"}
+
+
+def _actions(row: dict) -> dict:
+    out: dict = {}
+    for a in row.get("actions") or []:
+        field = ACTIONS.get(a.get("action_type", ""))
+        if field:
+            try:
+                out[field] = max(out.get(field, 0), int(float(a.get("value", 0))))  # lead types overlap: keep max
+            except (TypeError, ValueError):
+                continue
+    return out
 
 
 class MetaInsightsProvider:
@@ -24,7 +40,7 @@ class MetaInsightsProvider:
         until = date.today() - timedelta(days=1)  # complete days only
         since = until - timedelta(days=days - 1)
         params = {
-            "fields": "spend,impressions,reach,clicks",
+            "fields": "spend,impressions,reach,clicks,inline_link_clicks,actions",
             "time_range": {"since": since.isoformat(), "until": until.isoformat()},
             "time_increment": 1,
             "level": "campaign",
@@ -45,6 +61,8 @@ class MetaInsightsProvider:
                 impressions=int(row.get("impressions", 0)),
                 reach=int(row.get("reach", 0)),
                 clicks=int(row.get("clicks", 0)),
+                link_clicks=int(row.get("inline_link_clicks", 0) or 0),
+                **_actions(row),
             )
             for row in rows
         ]

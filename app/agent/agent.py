@@ -27,7 +27,7 @@ def build_meta_toolset() -> McpToolset:
                 command=sys.executable,  # same Python/venv as the backend
                 args=["-m", "app.mcp_server.server"],
                 cwd=str(PROJECT_ROOT),
-                env=dict(os.environ),  # shares DATABASE_URL, META_* settings
+                env=dict(os.environ),  # shares MONGODB_URI, META_* settings
             ),
             timeout=30,
         ),
