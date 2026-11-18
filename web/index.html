@@ -450,6 +450,18 @@
       <div id="optimizerRoot" class="grid items-start gap-4 lg:grid-cols-2"></div>
     </section>
 
+    <!-- ============ USERS (admins only) ============ -->
+    <section id="view-users" class="view hidden">
+      <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 class="font-display text-2xl tracking-tight">Users</h1>
+          <p class="text-sm text-muted">Who can sign in to Milo, and who has the final say.</p>
+        </div>
+        <button type="button" data-user-add class="h-10 rounded-lg bg-accent px-4 text-sm font-medium text-accent-fg">Add person</button>
+      </div>
+      <div id="usersRoot" class="max-w-4xl"></div>
+    </section>
+
     <!-- ============ SETTINGS ============ -->
     <section id="view-settings" class="view hidden">
       <div class="mb-4">
@@ -495,6 +507,7 @@
     analytics: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
     optimizer: '<path d="M4 6h8M16 6h4M4 12h2M10 12h10M4 18h10M18 18h2"/><circle cx="14" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="18" r="2"/>',
     activity: '<path d="M3 12h4l3-8 4 16 3-8h4"/>',
+    users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18.5 14.5a6.5 6.5 0 0 1 3 5.5"/>',
     settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   };
   const navIcon = (id, on) => NAV_ICONS[id] ? `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="shrink-0 ${on ? "text-accent" : ""}">${NAV_ICONS[id]}</svg>` : "";
@@ -509,6 +522,7 @@
     { id: "analytics", label: "Analytics" },
     { id: "optimizer", label: "Optimizer" },
     { id: "activity", label: "Activity" },
+    { id: "users", label: "Users", admin: true },
     { id: "settings", label: "Settings" },
   ];
 
@@ -612,6 +626,7 @@
           <span class="text-muted">Role</span>
           <span class="rounded-full px-2 py-0.5 text-[11px] font-semibold ${admin ? "bg-ok/10 text-ok" : "bg-blue-50 text-blue-700"}">${admin ? "Admin" : "Editor"}</span></div>
         <p class="mt-2 text-[11px] leading-snug text-muted">${admin ? "You can approve and reject changes, and add people." : "You can draft and request changes. An admin approves them."}</p>
+        ${admin ? '<a href="#users" role="menuitem" class="mt-3 flex h-9 w-full items-center justify-center rounded-lg border border-line text-sm font-medium hover:bg-accent-soft">Manage users</a>' : ""}
         <button type="button" id="signOutBtn" role="menuitem" class="mt-3 h-9 w-full rounded-lg border border-line text-sm font-medium text-accent hover:bg-accent-soft">Sign out</button>
       </div></div>`;
     const btn = $("userBtn"), menu = $("userMenu");
@@ -873,7 +888,7 @@
       const count = n2 ? `<span class="ml-auto grid h-[22px] min-w-[22px] place-items-center rounded-full bg-brand px-1.5 text-[11px] font-bold text-white">${n2}</span>` : "";
       return `<a href="#${n.id}" class="${cls} ${active === n.id ? "bg-surface font-semibold text-ink shadow-soft" : "text-muted hover:bg-surface hover:text-ink"}" ${active === n.id ? 'aria-current="page"' : ""}>${navIcon(n.id, active === n.id)}${n.label}${count}</a>`;
     };
-    const nav = NAV.filter((n) => n.id !== "trends" || state.status?.labs_enabled !== false);
+    const nav = NAV.filter((n) => (n.id !== "trends" || state.status?.labs_enabled !== false) && (!n.admin || state.user?.role === "admin"));
     // Trends opens its sub-pages under it in the menu (only while you are on Trends).
     const sub = location.hash.slice(1).split("/")[1] || "";
     const trendSubs = active !== "trends" ? "" : `<div class="ml-5 flex flex-col gap-0.5 border-l border-line pl-2">${TREND_SUBS.map((t) =>
@@ -2068,6 +2083,119 @@
     }
   }
 
+  // =====================================================================
+  // USERS (admins only; the server refuses /api/auth/users for editors)
+  // =====================================================================
+  const ROLE_INFO = {
+    admin: ["Admin", "bg-ok/10 text-ok", "Approves and rejects changes, manages people"],
+    editor: ["Editor", "bg-blue-50 text-blue-700", "Drafts campaigns and requests changes"],
+  };
+  const roleBadge = (r) => { const [l, c] = ROLE_INFO[r] || [r, "bg-bg text-muted"]; return `<span class="whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ${c}">${l}</span>`; };
+  const roleSelect = (id, value) => `<select id="${id}" class="mt-1 h-10 w-full rounded-lg border border-line bg-elevated px-3 text-sm outline-none focus:ring-2 focus:ring-accent/30">
+      ${Object.entries(ROLE_INFO).map(([k, [l, , d]]) => `<option value="${k}" ${k === value ? "selected" : ""}>${l} (${d.charAt(0).toLowerCase() + d.slice(1)})</option>`).join("")}</select>`;
+  const field = (id, label, type = "text", extra = "") => `<label for="${id}" class="mt-3 block text-xs text-muted">${label}</label>
+      <input id="${id}" type="${type}" ${extra} class="mt-1 h-10 w-full rounded-lg border border-line bg-elevated px-3 text-sm outline-none focus:ring-2 focus:ring-accent/30" />`;
+
+  async function renderUsers() {
+    const root = $("usersRoot");
+    root.innerHTML = `<div class="card p-4">${skeleton("h-32")}</div>`;
+    try {
+      const users = await api("/api/auth/users");
+      state.users = users;
+      const admins = users.filter((u) => !u.disabled && u.role === "admin");
+      const editors = users.filter((u) => !u.disabled && u.role === "editor");
+      const off = users.filter((u) => u.disabled);
+      const avatar = (u) => `<span class="grid size-10 shrink-0 place-items-center rounded-full ${u.disabled ? "bg-line-strong" : "bg-brand"} font-bold text-white" aria-hidden="true">${esc((u.name || u.email).charAt(0).toUpperCase())}</span>`;
+      // The role switch is the page's main control: one tap shows (and changes) what this person may do.
+      const roleSwitch = (u) => `<div class="inline-flex rounded-full border border-line bg-bg p-0.5" role="group" aria-label="Role for ${esc(u.name)}">
+          ${["editor", "admin"].map((r) => {
+            const on = u.role === r;
+            return `<button type="button" ${on ? 'aria-pressed="true" tabindex="-1"' : `aria-pressed="false" data-user-setrole="${u.id}" data-role="${r}"`}
+              class="h-8 rounded-full px-3.5 text-[13px] ${on ? (r === "admin" ? "cursor-default bg-ok font-semibold text-white" : "cursor-default bg-ink font-semibold text-white") : "text-muted hover:text-ink"}">${ROLE_INFO[r][0]}</button>`;
+          }).join("")}</div>`;
+      const row = (u) => {
+        const me = state.user && u.id === state.user.id;
+        return `<li class="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3.5 sm:flex-nowrap">
+          ${avatar(u)}
+          <div class="min-w-0 flex-1 basis-[calc(100%-3.5rem)] sm:basis-auto">
+            <div class="truncate text-sm font-semibold text-ink">${esc(u.name)}${me ? ' <span class="font-normal text-muted">(you)</span>' : ""}</div>
+            <div class="truncate text-xs text-muted">${esc(u.email)}</div>
+          </div>
+          <div class="hidden w-36 shrink-0 text-xs text-subtle md:block">${u.last_login_at ? `Signed in ${ago(u.last_login_at)}` : "Hasn't signed in yet"}</div>
+          ${u.disabled
+            ? `<button type="button" data-user-toggle="${u.id}" class="ml-14 h-9 sm:ml-0 rounded-lg border border-line px-3 text-sm font-medium text-ok hover:bg-accent-soft">Turn access on</button>`
+            : `<div class="ml-14 flex items-center gap-2 sm:ml-0">${roleSwitch(u)}</div><button type="button" data-user-more="${u.id}" class="h-9 rounded-lg px-2.5 text-sm text-muted hover:bg-accent-soft hover:text-ink" aria-label="More for ${esc(u.name)}">More</button>`}
+        </li>`;
+      };
+      const group = (title, rule, list, emptyText) => `<section class="mb-6">
+          <div class="mb-2 flex flex-col gap-0.5 px-1 sm:flex-row sm:items-baseline sm:gap-3">
+            <h2 class="font-display text-base font-semibold text-ink">${title} <span class="font-normal text-subtle">${list.length}</span></h2>
+            <p class="text-xs text-muted">${rule}</p>
+          </div>
+          ${list.length ? `<ul class="card divide-y divide-line">${list.map(row).join("")}</ul>`
+            : `<p class="rounded-xl border border-dashed border-line-strong px-4 py-3 text-sm text-muted">${emptyText}</p>`}
+        </section>`;
+      root.innerHTML = `
+        ${group("Can approve", "Admins approve or reject every change and add people.", admins, "")}
+        ${group("Can request", "Editors draft campaigns and ask for changes. An admin approves them.", editors, "No editors yet. Add someone who drafts campaigns but shouldn't approve them.")}
+        ${off.length ? `<details>
+          <summary class="cursor-pointer px-1 text-sm font-medium text-muted hover:text-ink">No access (${off.length})</summary>
+          <p class="mb-2 mt-1 px-1 text-xs text-muted">They can't sign in. Their names stay on past approvals and activity.</p>
+          <ul class="card divide-y divide-line opacity-75">${off.map(row).join("")}</ul>
+        </details>` : ""}`;
+    } catch (e) {
+      root.innerHTML = errorBox(e.message, "users");
+    }
+  }
+
+  function userAction(el) {
+    const id = Number(el.dataset.userSetrole || el.dataset.userMore || el.dataset.userToggle);
+    const u = (state.users || []).find((x) => x.id === id);
+    if (!u) return;
+    const patch = (body, msg) => api(`/api/auth/users/${id}`, { method: "PATCH", body: JSON.stringify(body) }).then(() => { toast(msg); renderUsers(); });
+    const toggle = () => confirmDialog({
+      title: u.disabled ? `Turn on access for ${u.name}?` : `Turn off access for ${u.name}?`,
+      body: u.disabled ? "They can sign in again with their old password." : "They're signed out now and can't sign in. Their name stays on past approvals and activity.",
+      ok: u.disabled ? "Turn access on" : "Turn access off",
+      onOk: () => patch({ disabled: !u.disabled }, u.disabled ? `Access turned on for ${u.name}` : `Access turned off for ${u.name}`),
+    });
+    if (el.dataset.userSetrole) {
+      const r = el.dataset.role, toAdmin = r === "admin";
+      return confirmDialog({
+        title: toAdmin ? `Make ${u.name} an admin?` : `Make ${u.name} an editor?`,
+        body: toAdmin ? "They'll be able to approve and reject changes and add people. They're signed out once and sign in again."
+          : "They'll still draft and request changes, but can't approve them. They're signed out once and sign in again.",
+        ok: toAdmin ? "Make admin" : "Make editor",
+        onOk: () => patch({ role: r }, `${u.name} is now an ${ROLE_INFO[r][0].toLowerCase()}`),
+      });
+    }
+    if (el.dataset.userToggle) return toggle();
+    const me = state.user && u.id === state.user.id;
+    confirmDialog({
+      title: `Set a new password for ${u.name}`, body: "Give them the new password yourself. They're signed out everywhere.", ok: "Set password",
+      extra: field("uPass", "New password (at least 10 characters)", "password", 'autocomplete="new-password" minlength="10"')
+        + (me ? "" : `<button type="button" id="uToggle" class="mt-4 text-sm font-medium text-danger hover:underline">Turn off access for ${esc(u.name)} instead</button>`),
+      onOk: () => patch({ password: $("uPass").value }, `Password set for ${u.name}`),
+    });
+    if (!me) $("uToggle").onclick = () => { closeConfirm(); toggle(); };
+  }
+
+  function addUserDialog() {
+    confirmDialog({
+      title: "Add a person", body: "They sign in with this email and password. Share the password with them yourself.", ok: "Add person",
+      extra: field("nuName", "Name", "text", 'maxlength="80" autocomplete="off"') + field("nuEmail", "Email", "email", 'autocomplete="off"')
+        + `<label for="nuRole" class="mt-3 block text-xs text-muted">Role</label>${roleSelect("nuRole", "editor")}`
+        + field("nuPass", "Password (at least 10 characters)", "password", 'autocomplete="new-password" minlength="10"'),
+      onOk: async () => {
+        const body = { name: $("nuName").value.trim(), email: $("nuEmail").value.trim(), role: $("nuRole").value, password: $("nuPass").value };
+        if (!body.email) throw new Error("Enter an email address.");
+        await post("/api/auth/users", body);
+        toast(`Added ${body.name || body.email} as ${ROLE_INFO[body.role][0]}`);
+        renderUsers();
+      },
+    });
+  }
+
   async function renderSettings() {
     const root = $("settingsRoot");
     root.innerHTML = `<div class="card p-4">${skeleton("h-32")}</div>`;
@@ -2636,14 +2764,16 @@
 
   function route() {
     const [view, arg] = (location.hash.slice(1) || "dashboard").split("/");
-    const known = ["dashboard", "campaigns", "campaign", "approvals", "inbox", "comments", "posts", "trends", "analytics", "optimizer", "activity", "settings"];
-    const v = known.includes(view) ? view : "dashboard";
+    const known = ["dashboard", "campaigns", "campaign", "approvals", "inbox", "comments", "posts", "trends", "analytics", "optimizer", "activity", "users", "settings"];
+    let v = known.includes(view) ? view : "dashboard";
+    if (v === "users" && state.user?.role !== "admin") v = "dashboard";  // the server refuses it too
     document.querySelectorAll(".view").forEach((el) => el.classList.add("hidden"));
     $("view-" + v).classList.remove("hidden");
     $("drawer").classList.add("hidden");
+    $("userMenu")?.classList.add("hidden");
     renderNav();
     window.scrollTo(0, 0);
-    ({ dashboard: renderDashboard, campaigns: renderCampaigns, campaign: () => renderCampaign(arg), approvals: renderApprovals, inbox: () => renderInbox(arg), comments: () => renderComments(arg), trends: renderLabs, posts: () => renderPosts(arg), analytics: renderAnalytics, optimizer: renderOptimizer, activity: renderActivity, settings: renderSettings })[v]();
+    ({ dashboard: renderDashboard, campaigns: renderCampaigns, campaign: () => renderCampaign(arg), approvals: renderApprovals, inbox: () => renderInbox(arg), comments: () => renderComments(arg), trends: renderLabs, posts: () => renderPosts(arg), analytics: renderAnalytics, optimizer: renderOptimizer, activity: renderActivity, users: renderUsers, settings: renderSettings })[v]();
   }
   function refreshCurrent() { route(); }
 
@@ -2691,6 +2821,8 @@
       });
     }
     if ((el = t("[data-run-optimizer]"))) return runOptimizer(el);
+    if (t("[data-user-add]")) return addUserDialog();
+    if ((el = t("[data-user-setrole], [data-user-more], [data-user-toggle]"))) return userAction(el);
     if ((el = t("[data-request]"))) {
       const kind = el.dataset.request, label = kind === "pause" ? "Pause" : "Publish";
       el.disabled = true;

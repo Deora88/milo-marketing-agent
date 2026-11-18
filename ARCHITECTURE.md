@@ -307,7 +307,9 @@ flowchart TD
 | Path | Responsibility |
 | --- | --- |
 | `app/main.py` | FastAPI app, lifespan (DB init + scheduler), security middleware, serves `web/` |
-| `app/security.py` | Host allow-list (DNS rebinding), `X-Milo-Client` header on changes (CSRF), optional `API_TOKEN` |
+| `app/security.py` | Host allow-list (DNS rebinding), `X-Milo-Client` header on changes (CSRF), optional `API_TOKEN`, sign-in and role checks (`OPEN_PATHS`, `ADMIN_ONLY`) |
+| `app/auth.py` | Sign-in: users (salted scrypt hashes), sessions (only the cookie's SHA-256 is stored), lockout, first admin, user changes (signs the person out, keeps one active admin) |
+| `app/actor.py` | The signed-in person for the current request, used for `requested_by` / `decided_by` and the audit `by` field |
 | `app/config.py` | Typed settings from `.env` |
 | `app/mcp_server/server.py` | **milo-meta MCP server** (FastMCP, stdio): draft validation, list, metrics, `request_*` tools, `research_topic` + `read_landing_page` |
 | `app/approvals.py` | Creates pending approvals: status rules, budget caps, Instagram image check, spend switch for resume, updates a waiting request with new details, audit |
@@ -328,12 +330,13 @@ flowchart TD
 | `app/jobs/scheduler.py` | APScheduler: metrics pull + optimizer (15 min, never wipes data on empty responses), stuck-approval recovery, stuck-DM hand-off (2 min), scheduled Instagram posts (1 min), post results (15 min) |
 | `app/db/` | MongoDB: Pydantic models + `store` (sequential ids, `claim()` for atomic approve, audit) |
 | `app/util/redact.py` | Masks tokens and keys in error text shown to the browser |
-| `app/api/` | Routes: chat (SSE), campaigns (+ change requests), approvals, insights (status, summary, audit), webhooks (`/webhooks/meta`), inbox, FAQ + leads (+ CSV), knowledge (PDFs), posts (+ public `/media/`), comments, instagram (setup check) |
+| `app/api/` | Routes: auth (sign-in, users), chat (SSE), campaigns (+ change requests), approvals, insights (status, summary, audit), webhooks (`/webhooks/meta`), inbox, FAQ + leads (+ CSV), knowledge (PDFs), posts (+ public `/media/`), comments, instagram (setup check) |
 | `app/dm/` | DM handling: `agent.py` (the DM assistant: FAQ/PDF answer, lead, hand-off, with time limits), `inbox.py` (reply window, Page token, sending, hold/hand-back), `knowledge.py` (PDF text), `profiles.py` (sender names), `instagram_setup.py` |
 | `app/social/` | Instagram posts: `posts.py` (drafts, checks, approval request), `media.py` (image sizes, Story/Reel text, Reel video), `instagram.py` (Content Publishing API), `insights.py` (results), `comments.py` (post comments: webhook parsing, reply, hide, bot drafts) |
-| `web/index.html` | The Milo UI: intro, dashboard + chat, campaigns, approvals, Inbox (+ FAQ, documents, leads), Posts, analytics, activity, settings (hash routes, calls `/api/*` on the same origin) |
+| `web/index.html` | The Milo UI: intro, sign-in, Today + chat, campaigns, approvals, Inbox (+ FAQ, documents, leads), Comments, Posts, Trends, analytics, optimizer, activity, Users (admins), settings (hash routes, calls `/api/*` on the same origin) |
+| `scripts/add_user.py` | Command-line user management: add, `--set-role`, `--reset-password`, `--disable` / `--enable`, `--list` |
 | `web/milo.css` | Prebuilt Tailwind styles (`web/tailwind.config.js` holds the design tokens) |
-| `tests/` | 200+ tests: MCP tools + approvals, DM webhook/bot/Inbox, Instagram DMs and posts, image generation (Cloudflare mocked), database indexes, MCP over real stdio, HTTP API, chat event streaming, Meta client, optimizer, Tavily research (respx) |
+| `tests/` | 270+ tests: sign-in and roles, MCP tools + approvals, DM webhook/bot/Inbox, Instagram DMs and posts, image generation (Cloudflare mocked), database indexes, MCP over real stdio, HTTP API, chat event streaming, Meta client, optimizer, Tavily research (respx) |
 
 ### Process view
 
@@ -363,13 +366,19 @@ FastAPI serves it at `/`, so it calls `/api/*` on the same origin: no CORS, no s
 | `#analytics` | 7-day totals, spend + clicks chart, per-campaign table, grounded analysis | `/api/summary`, per-campaign metrics | — |
 | `#activity` | Audit log | `/api/audit` | — |
 | `#settings` | Setup checklist and harness rules | `/api/status` | — |
+| `#users` | Admins only: people grouped by role (Can approve / Can request / No access), Editor \| Admin switch, add person, new password, access on/off | `/api/auth/users` | `POST /api/auth/users`, `PATCH /api/auth/users/{id}` |
+
+With `AUTH_REQUIRED=true` a sign-in page (or "create the first admin" on first run) comes before every screen. The
+Users link and page are shown only to admins, and Approve / Reject only to admins; the server enforces both.
+The table above lists the core screens; Inbox, Comments, Posts, Trends and Optimizer are described in section 8b and
+the README.
 
 Chat details: replies stream in (`delta`), each tool call shows a step, a **campaign proposal card** appears when
 `create_campaign_draft` saves a draft, and approval cards render inline. Approve always opens a confirmation dialog
 because it changes a live ad. The "agent insight" and "grounded analysis" text is computed in the browser from stored
 metrics (fact → calculation → suggestion); the suggestion is never applied without an approval.
 
-Design tokens (warm paper palette, Fraunces headings, Outfit body) live in `web/tailwind.config.js`; rebuild
+Design tokens (light palette, orange accent, Plus Jakarta Sans) live in `web/tailwind.config.js`; rebuild
 `web/milo.css` only after changing classes in `index.html`.
 
 ## 8. Data model
@@ -493,7 +502,9 @@ erDiagram
     }
 ```
 
-Also: `faq_entries` (question/answer pairs for the DM assistant) and `counters` (sequential ids).
+Also: `faq_entries` (question/answer pairs for the DM assistant), `counters` (sequential ids), `users` (email, name,
+role `editor` / `admin`, salted scrypt hash, disabled, last sign-in) and `sessions` (SHA-256 of the cookie, user id,
+expiry; MongoDB deletes expired ones). Approvals carry `requested_by` and `decided_by`.
 
 ## 8b. DMs and Instagram posts
 
@@ -557,6 +568,11 @@ The model's private reasoning (`thought` parts) is never sent. Each turn logs `c
 - The tool guard blocks any tool not on the allow-list, so new server tools need a code review before the agent
   can use them.
 - `META_DRY_RUN=true` by default, so a fresh checkout cannot touch Meta.
+- **Sign-in and roles** (`AUTH_REQUIRED=true`, default): every `/api` route except sign-in itself needs a session;
+  approve, reject and user management need the admin role. Checked in `app/security.py` on every request, so a
+  hidden button is only cosmetic. Passwords are scrypt-hashed, session cookies are `HttpOnly` + `SameSite=Strict`,
+  five wrong tries lock sign-in for 15 minutes, and a role change, new password or disabled account signs the person
+  out at once.
 - Every draft, change request, approval, execution, rejection, failure, optimizer run and web research call is written to `AuditLog`.
 - The optimizer has no path to Meta: it can only file approvals, exactly like the agent and the UI buttons.
 - Web research results are **untrusted input**. `research_topic` and `read_landing_page` wrap them with a note that

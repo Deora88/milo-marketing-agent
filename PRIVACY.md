@@ -1,6 +1,6 @@
 # Milo — Privacy Policy and Terms
 
-_Last updated: 6 November 2026_
+_Last updated: 18 November 2026_
 
 Milo is a student internship project: an AI marketing assistant that drafts and (after human approval) publishes
 Meta ad campaigns and Instagram posts, and answers Messenger and Instagram direct messages for the business that
@@ -16,6 +16,8 @@ service.
   Instagram shares for them (likes, comments count, views, reach, saves, shares, replies).
 - **Business documents:** PDFs the owner uploads (price lists, brochures, policies). Milo keeps only their text
   (not the file) so the DM assistant can answer from them.
+- **Milo user accounts:** the name, email and role of each person who signs in to Milo, a salted hash of their
+  password (never the password itself), when they last signed in, and who requested and approved each change.
 - **Chat messages** typed into Milo, and **web search queries** (business type and city) used to research ad copy.
 
 **About people who message or comment** (Facebook Page Messenger, the linked Instagram account, and comments on

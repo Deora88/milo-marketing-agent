@@ -12,8 +12,9 @@ Cloudflare Workers AI (`@cf/black-forest-labs/flux-1-schnell`, ad images) · HTM
 
 ## Frontend
 The UI lives in `web/` and is served by the backend itself: run the server and open **http://localhost:8000**.
-Design: warm "paper" palette, Fraunces + Outfit fonts, 3-column dashboard (agent status · spend chart + chat · performance and approvals).
-Screens: Dashboard (with chat) · Campaigns (+ detail) · Approvals · Analytics · Activity · Settings.
+Design: "Decision Inbox" layout (approvals first) with a left sidebar, Plus Jakarta Sans, light palette with an orange accent.
+Screens: Today (with chat) · Campaigns (+ detail) · Approvals · Inbox · Comments · Posts · Trends (labs) · Analytics ·
+Optimizer · Activity · Users (admins only) · Settings. With sign-in on, a sign-in page comes first (see *Sign-in and roles*).
 `web/index.html` is plain HTML/JS — no Node needed. Styles are prebuilt into `web/milo.css`; rebuild only if you change classes:
 `npx tailwindcss@3 -c web/tailwind.config.js -i web/tailwind.input.css -o web/milo.css --minify`
 
@@ -24,7 +25,7 @@ cp .env.example .env         # MONGODB_URI + OPENROUTER_API_KEY (+ optional TAVI
                              # while META_DRY_RUN=true
 uv run uvicorn app.main:app --reload
 # open http://localhost:8000
-uv run pytest                # 200+ tests, in-memory MongoDB; ignores your .env; never calls the LLM, Meta or Tavily
+uv run pytest                # 270+ tests, in-memory MongoDB; ignores your .env; never calls the LLM, Meta or Tavily
 ```
 No `uv`? `pip install uv` first (Windows: `python -m pip install uv`).
 
@@ -67,21 +68,34 @@ app/
   meta/              throttled Meta client (usage headers, backoff, dry-run) + campaign builder
   metrics/           MetricsProvider interface: Meta Insights (live) and simulated (dry run / demo)
   jobs/              APScheduler: pulls metrics every 15 min (per-campaign failures don't stop the pull)
-  db/                MongoDB: models (Campaign, Approval, MetricSnapshot, AuditLog, InboundMessage, FaqEntry, Lead) + store (ids, atomic claim)
+  db/                MongoDB: models (Campaign, Approval, MetricSnapshot, AuditLog, InboundMessage, FaqEntry, Lead, SocialPost,
+                     Comment, KnowledgeDoc, User, Session, ...) + store (ids, atomic claim)
   dm/inbox.py        DM conversations, Meta's reply window, replies through the Send API
   dm/agent.py        DM bot: FAQ answers, lead capture, hand-off (drafts unless DM_AUTOREPLY=true)
   dm/knowledge.py    business PDFs: upload checks, text extraction (pypdf), passages, BM25 + hybrid search
   dm/embeddings.py   meaning-based PDF search: Cloudflare bge-m3 embeddings, cached in MongoDB
   dm/profiles.py     sender names from Meta (Messenger profile / Instagram user), cached
-  security.py        Host allow-list, X-Milo-Client header on changes (CSRF), optional API token
+  security.py        Host allow-list, X-Milo-Client header on changes (CSRF), optional API token, sign-in + role checks
+  auth.py            sign-in: users, scrypt password hashes, sessions, lockout after wrong tries
+  actor.py           who is signed in for the current request (used for "requested by" / "by" in the audit log)
+  campaign_state.py  draft rules, requirements checklist (known / assumed / missing), version history
+  analysis.py        period-over-period and creative comparison (facts, calculations, assumptions)
+  labs/              Trends page prototype: own-account patterns, competitor watch, hashtags
+  social/            Instagram posts (drafts, media checks, publishing, results) and post comments
+  dm/instagram_setup.py  checks the Page / Instagram link and webhook subscription
   util/redact.py     masks tokens and keys in error text
-  api/               routes: chat (SSE), campaigns (+ change requests), approvals, insights (status, summary, audit), webhooks (Meta DMs), inbox (DM threads + replies), faq (bot FAQ + leads), knowledge (business PDFs)
+  api/               routes: auth (sign-in, users), chat (SSE), campaigns (+ change requests), approvals, insights (status,
+                     summary, audit), webhooks (Meta DMs + comments), inbox, faq (+ leads), knowledge (PDFs), posts, comments,
+                     instagram (setup check), labs (Trends)
+scripts/
+  add_user.py        add users, change a role, reset a password, disable / enable, list users
+  check_mongo.py     checks the MongoDB connection on its own
 web/
   index.html         the Milo UI (single file, served at /)
   milo.css           prebuilt Tailwind styles; tokens in tailwind.config.js
-tests/               201 tests: MCP tools + approval gate (caps, spend switch, CSRF, double approve, failures), MCP over
+tests/               270+ tests: MCP tools + approval gate (caps, spend switch, CSRF, double approve, failures), MCP over
                      stdio, HTTP API, chat streaming, Meta client + campaign builder, previews, optimizer, research, image generation,
-                     DM webhook + inbox + bot (in-memory MongoDB via mongomock, HTTP mocked with respx; a personal .env is ignored)
+                     DM webhook + inbox + bot, Instagram posts and comments, sign-in and roles (in-memory MongoDB via mongomock, HTTP mocked with respx; a personal .env is ignored)
 ```
 
 ## Modes and spend safety
@@ -244,6 +258,10 @@ primary text, with a "based on" note. The chat shows the sources under the reply
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/` | The Milo UI (`web/index.html`) |
+| GET | `/api/auth/state` | Is sign-in on, is the first admin still to be created, who is signed in |
+| POST | `/api/auth/login` · `/logout` · `/setup` | Sign in, sign out; `/setup` creates the first admin (first run only, this computer only) |
+| GET · POST | `/api/auth/users` | Admin only: list users · add a user (`email`, `password`, `role`, `name`) |
+| PATCH | `/api/auth/users/{id}` | Admin only: change `role`, `disabled`, `password` or `name`; signs that person out |
 | POST | `/api/chat` | Chat turn, streamed as SSE events: `delta`, `message`, `tool_call`, `tool_result`, `approval`, `error`, `done` |
 | GET | `/api/campaigns?status=&q=` | Campaigns, optionally filtered by status / name |
 | GET | `/api/campaigns/{id}` | One campaign |
@@ -539,11 +557,15 @@ With `AUTH_REQUIRED=true` (the default) Milo asks everyone to sign in.
   and *request* a change. Only an **admin** can approve or reject, and add or change users. The server checks
   the role on every request (`app/security.py`); the UI hiding a button is only cosmetic.
 - **Who did it:** approvals show "Requested by" and "Approved / Rejected by", and Activity rows carry `by`.
-- **Manage users** with `scripts/add_user.py` (or the `/api/auth/users` API as an admin):
+- **Users page** (admins only, sidebar → Users): people are grouped into *Can approve* (admins) and *Can request*
+  (editors). Each row has an Editor | Admin switch; **More** sets a new password or turns off access; **Add person**
+  adds someone. People with access turned off are listed under *No access*. Editors don't see the page, and the
+  server refuses `/api/auth/users` for them.
+- **From the command line** with `scripts/add_user.py` (or the `/api/auth/users` API as an admin):
   `someone@example.com --role editor --name "Priya"` adds a user, `--set-role admin` changes a role,
   `--reset-password` sets a new password, `--disable` / `--enable` blocks or allows sign-in, `--list` shows everyone.
   Any change signs that person out; Milo always keeps at least one active admin.
 - **How it is stored:** passwords as salted scrypt hashes; a session is a random id in an `HttpOnly`,
   `SameSite=Strict` cookie, and only its SHA-256 is saved. Five wrong tries lock sign-in for 15 minutes.
-- **Limits of this version:** two roles, no Users page yet, and requests made by the chat agent are recorded
+- **Limits of this version:** two roles, and requests made by the chat agent are recorded
   as "agent", not with the name of the person chatting. Set `AUTH_REQUIRED=false` for the old single-user mode.

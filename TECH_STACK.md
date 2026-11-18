@@ -93,10 +93,11 @@ workflows and add another service to run. It is listed as optional future work f
 
 ### 6. Frontend served by the backend (and why not Apper or a React app)
 - `web/index.html` is one file of HTML + vanilla JS, served by FastAPI at `/`. Same origin as the API, so no CORS,
-  no hosting, no login system and no browser "local network" prompts; evaluators run one command and open
+  no hosting, no third-party login service and no browser "local network" prompts; evaluators run one command and open
   `http://localhost:8000`.
-- Design follows the Aether AI reference: warm paper palette, Fraunces + Outfit, 3-column dashboard with the chat in
-  the centre. Every number comes from the API; the reference's hardcoded word cloud and sample activity were dropped.
+- Design started from the Aether AI reference and was then reworked into the "Decision Inbox" layout (approvals
+  first, left sidebar, Plus Jakarta Sans). Sign-in and the admins-only Users page are built in, with no outside login
+  service. Every number comes from the API; the reference's hardcoded word cloud and sample activity were dropped.
 - Tailwind is **prebuilt** into `web/milo.css` (design tokens in `web/tailwind.config.js`), so the page needs no CDN
   and no Node at runtime. Charts are hand-drawn SVG, with no chart library.
 - Tried and dropped: an **Apper**-hosted React frontend (separate domain → CORS and Chrome local-network prompts; a

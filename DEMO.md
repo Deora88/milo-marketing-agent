@@ -12,8 +12,11 @@ uv run uvicorn app.main:app --reload
 # open http://localhost:8000
 ```
 Defaults are safe: `META_DRY_RUN=true` (no Meta calls, simulated metrics) and `META_ALLOW_SPEND=false`.
+**Sign in:** on first start Milo asks you to create the first admin. To show roles, add an editor on the **Users**
+page (sidebar, admins only) and open Milo in a private window as that editor: they can draft and request, but have
+no Approve button and no Users page.
 Check **Settings**: the checklist shows the database connection, spend switch, caps and what is configured.
-Tests: `uv run pytest` (200+ tests, in-memory MongoDB, no LLM, Meta or Tavily calls).
+Tests: `uv run pytest` (270+ tests, in-memory MongoDB, no LLM, Meta or Tavily calls).
 
 ## 1. Agent harness — plan a campaign in chat (3 min)
 On the **Dashboard**, type:
