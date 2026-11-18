@@ -232,7 +232,7 @@ def test_public_media_serves_only_waiting_post_files_from_any_host():
     assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg"
     assert outside.get(f"/media/{p.media_token}/../../.env").status_code in (400, 404)  # never the file
     assert outside.get(f"/media/{'x' * 32}/pub-00.jpg").status_code == 404
-    assert outside.get(f"/media/{p.media_token}/{p.images[0].split('/')[-1]}").status_code == 404  # originals: no
+    assert outside.get(f"/media/{p.media_token}/{Path(p.images[0]).name}").status_code == 404  # originals: no
     assert outside.get("/api/posts").status_code == 400  # the rest of Milo stays localhost-only
     assert outside.post(f"/media/{p.media_token}/pub-00.jpg").status_code != 200
     store.update(SocialPost, p.id, {"status": "published"})

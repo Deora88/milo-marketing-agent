@@ -25,9 +25,12 @@ cp .env.example .env         # MONGODB_URI + OPENROUTER_API_KEY (+ optional TAVI
                              # while META_DRY_RUN=true
 uv run uvicorn app.main:app --reload
 # open http://localhost:8000
-uv run pytest                # 270+ tests, in-memory MongoDB; ignores your .env; never calls the LLM, Meta or Tavily
+uv run pytest                # 279 tests, in-memory MongoDB; ignores your .env; never calls the LLM, Meta or Tavily
 ```
 No `uv`? `pip install uv` first (Windows: `python -m pip install uv`).
+
+**Docker:** `docker compose up --build` runs the same app from the same `.env` (add `--profile local-db` for a
+local MongoDB). [DEPLOY.md](DEPLOY.md) covers Docker, webhooks through a tunnel, and a checklist before going live.
 
 **MongoDB Atlas (free):** create an M0 cluster, add a database user, allow your IP under *Network Access*, then copy
 the connection string into `MONGODB_URI`. Settings shows "Database (MongoDB): Connected" when it works.
@@ -87,6 +90,8 @@ app/
   api/               routes: auth (sign-in, users), chat (SSE), campaigns (+ change requests), approvals, insights (status,
                      summary, audit), webhooks (Meta DMs + comments), inbox, faq (+ leads), knowledge (PDFs), posts, comments,
                      instagram (setup check), labs (Trends)
+Dockerfile           container image (Python 3.12 slim, deps from uv.lock, non-root, health check); see DEPLOY.md
+docker-compose.yml   Milo on 127.0.0.1:8000 + optional local MongoDB (profile local-db), image volume
 scripts/
   add_user.py        add users, change a role, reset a password, disable / enable, list users
   check_mongo.py     checks the MongoDB connection on its own
