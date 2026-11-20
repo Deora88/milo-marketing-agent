@@ -1,4 +1,5 @@
-"""Organic Instagram posts: drafts, images, checks, and the approval request. Nothing here calls Meta.
+"""Organic posts for Instagram and the LinkedIn Page: drafts, images, checks, and the approval request.
+Nothing here calls Meta or LinkedIn.
 
 A post is published only after a person approves it (approval action "publish_post", executed by
 app/actions.py, or by the scheduler at the approved time). Same gate as ads.
@@ -15,11 +16,44 @@ from app.db import store
 from app.db.models import Approval, SocialPost, now
 from app.social import media
 
-KINDS = {"photo": "Photo", "carousel": "Carousel", "reel": "Reel", "story": "Story"}
+PLATFORMS = {"instagram": "Instagram", "linkedin": "LinkedIn"}
+KINDS = {"photo": "Photo", "carousel": "Carousel", "reel": "Reel", "story": "Story"}  # Instagram
 MAX_IMAGES = {"photo": 1, "carousel": 10, "reel": 10, "story": 1}
 MIN_IMAGES = {"photo": 1, "carousel": 2, "reel": 1, "story": 1}
 MAX_CAPTION, MAX_HASHTAGS, MAX_MENTIONS = 2200, 30, 20
+# LinkedIn Page posts (Posts API): text only, one image, or a MultiImage post (2-20 images, organic only)
+LINKEDIN_KINDS = {"text": "Text", "photo": "Photo", "multi_image": "Multi-image"}
+LINKEDIN_MAX_IMAGES = {"text": 0, "photo": 1, "multi_image": 20}
+LINKEDIN_MIN_IMAGES = {"text": 0, "photo": 1, "multi_image": 2}
+LINKEDIN_MAX_TEXT, MAX_ALT_TEXT = 3000, 300
+# Switching platform on a draft keeps the closest post type
+TO_LINKEDIN = {"photo": "photo", "carousel": "multi_image", "reel": "multi_image", "story": "photo"}
+TO_INSTAGRAM = {"text": "photo", "photo": "photo", "multi_image": "carousel"}
 EDITABLE = {"draft", "failed"}
+
+
+def kinds_for(platform: str) -> dict:
+    return LINKEDIN_KINDS if platform == "linkedin" else KINDS
+
+
+def max_images(platform: str, kind: str) -> int:
+    return (LINKEDIN_MAX_IMAGES if platform == "linkedin" else MAX_IMAGES).get(kind, 1)
+
+
+def min_images(platform: str, kind: str) -> int:
+    return (LINKEDIN_MIN_IMAGES if platform == "linkedin" else MIN_IMAGES).get(kind, 1)
+
+
+def kind_label(p: SocialPost) -> str:
+    return kinds_for(p.platform).get(p.kind, p.kind)
+
+
+def _check_platform_kind(platform: str, kind: str) -> None:
+    if platform not in PLATFORMS:
+        raise PostError(f"Platform must be one of: {', '.join(PLATFORMS)}.")
+    if kind not in kinds_for(platform):
+        prefix = "LinkedIn post type" if platform == "linkedin" else "Post type"
+        raise PostError(f"{prefix} must be one of: {', '.join(kinds_for(platform))}.")
 
 
 class PostError(ValueError):
@@ -42,8 +76,12 @@ def _editable(p: SocialPost) -> None:
         raise PostError(f"This post is {p.status.replace('_', ' ')}; it can't be changed now.")
 
 
-def caption_problems(kind: str, caption: str) -> list[str]:
+def caption_problems(kind: str, caption: str, platform: str = "instagram") -> list[str]:
     out = []
+    if platform == "linkedin":
+        if len(caption) > LINKEDIN_MAX_TEXT:
+            out.append(f"Text is {len(caption)} characters; LinkedIn allows {LINKEDIN_MAX_TEXT}.")
+        return out
     if len(caption) > MAX_CAPTION:
         out.append(f"Caption is {len(caption)} characters; Instagram allows {MAX_CAPTION}.")
     if len(re.findall(r"#\w+", caption)) > MAX_HASHTAGS:
@@ -85,44 +123,67 @@ def clean_overlay(overlay: dict | None) -> dict:
     return out
 
 
+def _clean_alt(alt_text: str | None) -> str:
+    alt = " ".join(str(alt_text or "").split())
+    if len(alt) > MAX_ALT_TEXT:
+        raise PostError(f"Image description can be at most {MAX_ALT_TEXT} characters.")
+    return alt
+
+
 def create(kind: str, caption: str = "", scheduled_at=None, source: str = "user",
-           overlay: dict | None = None) -> SocialPost:
-    if kind not in KINDS:
-        raise PostError(f"Post type must be one of: {', '.join(KINDS)}.")
+           overlay: dict | None = None, platform: str = "instagram", alt_text: str = "") -> SocialPost:
+    _check_platform_kind(platform, kind)
     caption = (caption or "").strip()
-    problems = caption_problems(kind, caption)
+    problems = caption_problems(kind, caption, platform)
     if problems:
         raise PostError(" ".join(problems))
-    p = store.insert(SocialPost(kind=kind, caption="" if kind == "story" else caption,
+    linkedin = platform == "linkedin"
+    p = store.insert(SocialPost(platform=platform, kind=kind, caption="" if kind == "story" else caption,
                                 scheduled_at=_parse_when(scheduled_at), source=source,
-                                overlay=clean_overlay(overlay)))
-    store.audit("post_drafted", post_id=p.id, kind=kind, source=source)
+                                overlay={} if linkedin else clean_overlay(overlay),
+                                alt_text=_clean_alt(alt_text) if linkedin else ""))
+    store.audit("post_drafted", post_id=p.id, kind=kind, platform=platform, source=source)
     return p
 
 
 def update(post_id: int, kind: str | None = None, caption: str | None = None, scheduled_at="__keep__",
-           overlay: dict | None = None) -> SocialPost:
+           overlay: dict | None = None, platform: str | None = None, alt_text: str | None = None) -> SocialPost:
     p = get(post_id)
     _editable(p)
     changes: dict = {}
+    plat = platform or p.platform
+    if plat not in PLATFORMS:
+        raise PostError(f"Platform must be one of: {', '.join(PLATFORMS)}.")
+    if plat != p.platform:
+        changes["platform"] = plat
+        if kind is None:  # keep the closest type on the other platform
+            kind = (TO_LINKEDIN if plat == "linkedin" else TO_INSTAGRAM).get(p.kind, "photo")
+            if plat == "linkedin" and kind == "photo" and not p.images:
+                kind = "text"
+            if plat == "linkedin" and kind == "multi_image" and len(p.images) < 2:
+                kind = "photo" if p.images else "text"
+        if plat == "linkedin":
+            changes["overlay"] = {}
     if kind is not None:
-        if kind not in KINDS:
-            raise PostError(f"Post type must be one of: {', '.join(KINDS)}.")
-        if len(p.images) > MAX_IMAGES[kind]:
-            raise PostError(f"A {KINDS[kind]} can have at most {MAX_IMAGES[kind]} image(s); remove some first.")
+        _check_platform_kind(plat, kind)
+        if len(p.images) > max_images(plat, kind):
+            raise PostError(f"A {PLATFORMS[plat]} {kinds_for(plat)[kind]} post can have at most "
+                            f"{max_images(plat, kind)} image(s); remove some first.")
         changes["kind"] = kind
     k = changes.get("kind", p.kind)
     if caption is not None:
         caption = caption.strip()
-        problems = caption_problems(k, caption)
-        if problems:
-            raise PostError(" ".join(problems))
         changes["caption"] = caption
+    problems = caption_problems(k, changes.get("caption", p.caption), plat)
+    if problems:
+        raise PostError(" ".join(problems))
     if k == "story":
         changes["caption"] = ""
+    if alt_text is not None and plat == "linkedin":
+        changes["alt_text"] = _clean_alt(alt_text)
     if scheduled_at != "__keep__":
         changes["scheduled_at"] = _parse_when(scheduled_at)
-    if overlay is not None:
+    if overlay is not None and plat == "instagram":
         changes["overlay"] = clean_overlay(overlay)
     changes.update(status="draft", error="")
     return store.update(SocialPost, p.id, changes)
@@ -132,9 +193,15 @@ def add_image(post_id: int, data: bytes) -> SocialPost:
     """Store an image (uploaded or AI-made) as a normalised JPEG. Formatting per post type happens at publish."""
     p = get(post_id)
     _editable(p)
-    if len(p.images) >= MAX_IMAGES[p.kind]:
-        raise PostError(f"A {KINDS[p.kind]} can have at most {MAX_IMAGES[p.kind]} image(s).")
-    img = media.feed_jpeg(data) if p.kind in ("photo", "carousel") else media.normalised_jpeg(data)
+    limit = max_images(p.platform, p.kind)
+    if len(p.images) >= limit:
+        if p.platform == "linkedin" and p.kind == "text":
+            raise PostError("A LinkedIn text post has no images. Switch the type to Photo or Multi-image first.")
+        raise PostError(f"A {kind_label(p)} can have at most {limit} image(s).")
+    if p.platform == "linkedin":  # LinkedIn shows any aspect ratio: keep the picture uncropped
+        img = media.normalised_jpeg(data, max_side=1920)
+    else:
+        img = media.feed_jpeg(data) if p.kind in ("photo", "carousel") else media.normalised_jpeg(data)
     d = _dir(p.id)
     d.mkdir(parents=True, exist_ok=True)
     path = d / f"img-{secrets.token_hex(4)}.jpg"
@@ -187,6 +254,13 @@ def prepare_media(p: SocialPost) -> SocialPost:
 def describe(p: SocialPost) -> str:
     """The approval card text: exactly what will be posted, where and when."""
     n = len(p.images)
+    if p.platform == "linkedin":
+        what = {"text": "a text post", "photo": "a post with 1 image",
+                "multi_image": f"a post with {n} images"}[p.kind]
+        when = (f"at {p.scheduled_at.astimezone(timezone.utc):%Y-%m-%d %H:%M} UTC" if p.scheduled_at
+                else "right after approval")
+        text = f' Text: "{p.caption[:180]}{"…" if len(p.caption) > 180 else ""}"' if p.caption else ""
+        return f"Post {what} to your LinkedIn Page (public) {when}.{text}"
     what = {"photo": "a photo", "carousel": f"a carousel of {n} images",
             "reel": f"a Reel ({n} image(s), {max(3, n * media.SECONDS_PER_IMAGE)} s video)",
             "story": "a Story (disappears after 24 hours)"}[p.kind]
@@ -207,22 +281,31 @@ def request_publish(post_id: int, source: str = "user") -> dict:
                 "message": "An approval for this post is already waiting for the user."}
     _editable(p)
     s = get_settings()
-    if len(p.images) < MIN_IMAGES[p.kind]:
-        need = MIN_IMAGES[p.kind]
-        raise PostError(f"A {KINDS[p.kind]} needs at least {need} image{'s' if need > 1 else ''}. "
+    need = min_images(p.platform, p.kind)
+    if len(p.images) < need:
+        raise PostError(f"A {kind_label(p)} needs at least {need} image{'s' if need > 1 else ''}. "
                         "Upload one or generate it with AI.")
-    problems = caption_problems(p.kind, p.caption)
+    if len(p.images) > max_images(p.platform, p.kind):
+        raise PostError(f"A {kind_label(p)} can have at most {max_images(p.platform, p.kind)} image(s).")
+    problems = caption_problems(p.kind, p.caption, p.platform)
     if problems:
         raise PostError(" ".join(problems))
+    if p.platform == "linkedin" and not p.caption:
+        raise PostError("Write the post text first: LinkedIn posts need text.")
     if p.scheduled_at and p.scheduled_at < now() + timedelta(minutes=2):
         raise PostError("The schedule time has passed. Pick a new time or clear it.")
-    if not s.meta_dry_run and not s.public_base_url.startswith("https://"):
+    if p.platform == "linkedin":
+        if not s.linkedin_dry_run and not (s.linkedin_access_token and s.linkedin_organization_id):
+            raise PostError("Set LINKEDIN_ACCESS_TOKEN and LINKEDIN_ORGANIZATION_ID in .env (or keep "
+                            "LINKEDIN_DRY_RUN=true to try it without posting).")
+    elif not s.meta_dry_run and not s.public_base_url.startswith("https://"):
         raise PostError("Set PUBLIC_BASE_URL in .env to your public https address (your ngrok domain): Meta "
                         "downloads the post's images and video from there.")
-    try:
-        p = prepare_media(p)
-    except media.MediaError as exc:
-        raise PostError(str(exc)) from exc
+    if p.platform == "instagram":  # LinkedIn gets the stored JPEGs uploaded directly at publish time
+        try:
+            p = prepare_media(p)
+        except media.MediaError as exc:
+            raise PostError(str(exc)) from exc
     a = store.insert(Approval(action="publish_post", post_id=p.id, summary=describe(p), source=source,
                               requested_by=current_actor()))
     store.update(SocialPost, p.id, {"status": "pending_approval", "error": ""})

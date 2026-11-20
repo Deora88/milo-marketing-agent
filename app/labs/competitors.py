@@ -126,7 +126,8 @@ def overview(days: int = DAYS) -> dict:
             findings.append(f"{best}s get {avg[best] / avg[other]:.1f}x the likes + comments of {other.lower()}s "
                             f"for these accounts (averages {avg[best]:,} vs {avg[other]:,}).")
     if per_week:
-        mine = len([p for p in store.find(SocialPost, {"status": "published", "meta_mode": "live"})
+        mine = len([p for p in store.find(SocialPost, {"status": "published", "meta_mode": "live",
+                                                        "platform": {"$ne": "linkedin"}})
                     if p.published_at and p.published_at >= now() - timedelta(days=days)]) / (days / 7)
         findings.append(f"They post about {sum(per_week) / len(per_week):.1f} times a week on average; "
                         f"you post {mine:.1f}.")

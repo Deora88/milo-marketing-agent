@@ -365,12 +365,12 @@
       <div id="approvalList" class="grid max-w-3xl gap-3"></div>
     </section>
 
-    <!-- ============ POSTS (organic Instagram) ============ -->
+    <!-- ============ POSTS (organic Instagram + LinkedIn Page) ============ -->
     <section id="view-posts" class="view hidden">
       <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 class="font-display text-2xl tracking-tight">Instagram posts</h1>
-          <p class="text-sm text-muted">Photos, carousels, Reels and Stories for your Instagram account (not ads, no budget). Nothing is posted until you approve it.</p>
+          <h1 class="font-display text-2xl tracking-tight">Posts</h1>
+          <p class="text-sm text-muted">Organic posts for your Instagram account and LinkedIn Page (not ads, no budget). Nothing is posted until you approve it.</p>
         </div>
         <button type="button" data-post-new class="h-10 rounded-lg bg-accent px-4 text-sm font-medium text-accent-fg">New post</button>
       </div>
@@ -722,9 +722,12 @@
     publish_campaign: { label: "Publish campaign", verb: "Publish" },
     pause_campaign: { label: "Pause campaign", verb: "Pause" },
     update_budget: { label: "Change budget", verb: "Change budget" },
-    publish_post: { label: "Instagram post", verb: "Publish" },
+    publish_post: { label: "Post", verb: "Publish" },
   };
   const POST_KIND = { photo: "Photo", carousel: "Carousel", reel: "Reel", story: "Story" };
+  const LI_KIND = { text: "Text", photo: "Photo", multi_image: "Multi-image" };
+  const POST_PLATFORM = { instagram: "Instagram", linkedin: "LinkedIn" };
+  const kindsFor = (p) => p.platform === "linkedin" ? LI_KIND : POST_KIND;
   const POST_STATUS = {
     draft: ["Draft", "bg-bg text-muted"],
     pending_approval: ["Waiting for approval", "bg-warn/10 text-warn"],
@@ -815,7 +818,7 @@
         ${a.created_at ? `<span>Requested ${ago(a.created_at)}${a.requested_by ? ` by ${esc(a.requested_by)}` : ""}</span>` : ""}
         ${a.decided_at ? `<span>${a.decided_by ? `${a.status === "rejected" ? "Rejected" : "Approved"} by ${esc(a.decided_by)}` : "Decided"} ${ago(a.decided_at)}</span>` : ""}
         ${showCampaign && a.campaign_id ? `<a class="text-accent hover:underline" href="#campaign/${a.campaign_id}">${esc(a.campaign_name || "Campaign #" + a.campaign_id)}</a>` : ""}
-        ${a.post_id ? `<a class="text-accent hover:underline" href="#posts/${a.post_id}">Instagram ${esc(POST_KIND[a.post_kind] || "post")} #${a.post_id}</a>` : ""}
+        ${a.post_id ? `<a class="text-accent hover:underline" href="#posts/${a.post_id}">${POST_PLATFORM[a.post_platform] || "Instagram"} ${esc((a.post_platform === "linkedin" ? LI_KIND : POST_KIND)[a.post_kind] || "post")} #${a.post_id}</a>` : ""}
       </div>
       ${pending && !canApprove() ? `<p class="mt-3 rounded-lg border border-dashed border-line-strong bg-bg px-3 py-2 text-xs text-muted">Only an admin can approve or reject this.</p>` : ""}
       ${pending && canApprove() ? `<div class="mt-3 flex ${compact ? "" : "justify-end"} gap-2">
@@ -828,14 +831,15 @@
   async function decide(id, kind, btn) {
     if (kind === "approve") {
       const isPost = btn.dataset.action === "publish_post";
+      const where = /LinkedIn Page/.test(btn.dataset.summary || "") ? "LinkedIn" : "Instagram";
       confirmDialog({
-        title: isPost ? "Publish to Instagram?" : `${btn.dataset.verb} on Meta?`,
-        body: isPost ? `${btn.dataset.summary} Milo posts it to your Instagram account now, or keeps it until the scheduled time.`
+        title: isPost ? `Publish to ${where}?` : `${btn.dataset.verb} on Meta?`,
+        body: isPost ? `${btn.dataset.summary} Milo posts it ${where === "LinkedIn" ? "publicly on your LinkedIn Page" : "to your Instagram account"} now, or keeps it until the scheduled time.`
           : `${btn.dataset.summary}. Milo will make this change on your Meta ad account right away.`,
         ok: `Yes, ${btn.dataset.verb.toLowerCase()}`,
         onOk: async () => {
           await post(`/api/approvals/${id}/approve`);
-          toast(`${btn.dataset.verb} approved — sent to Meta`);
+          toast(`${btn.dataset.verb} approved — sent to ${isPost ? where : "Meta"}`);
           markApprovalInChat(id, "approved");
           refreshCurrent();
         },
@@ -2266,6 +2270,7 @@
         "DM webhook (Inbox)": NAV_ICONS.inbox,
         "Bot answers": '<rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 4v4M9 13h.01M15 13h.01M9.5 16h5"/>',
         "Instagram posts": NAV_ICONS.posts,
+        "LinkedIn Page posts": '<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 10v7M8 7v.01M12 17v-4a2 2 0 0 1 4 0v4M12 10v7"/>',
         "Instagram DMs check": NAV_ICONS.comments,
         "Web research (Tavily)": '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.5-4.5"/>',
         "Optimizer": NAV_ICONS.optimizer,
@@ -2285,6 +2290,7 @@
         "DM webhook (Inbox)": s.dm?.webhook_configured ? "Connected" : "Not set",
         "Bot answers": s.dm?.autoreply ? "Auto-send" : "Drafts only",
         "Instagram posts": s.posts?.ready ? "Ready" : "Needs setup",
+        "LinkedIn Page posts": !s.linkedin ? "Not set" : s.linkedin.dry_run ? "Dry run" : !s.linkedin.configured ? "Not set" : s.linkedin.token_days_left != null && s.linkedin.token_days_left <= 7 ? (s.linkedin.token_days_left > 0 ? `Needs new token (${s.linkedin.token_days_left} d)` : "Needs new token") : "Live",
         "Web research (Tavily)": !s.research?.enabled ? "Off" : s.research.key_set ? "On" : "Not set",
       };
       const svg = (d, size = 18) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="shrink-0">${d}</svg>`;
@@ -2310,10 +2316,11 @@
           ${check(s.metrics_provider === "meta", "Metrics source", s.metrics_provider === "meta" ? `Real Meta Insights every ${s.metrics_poll_minutes} min (paused ads have no new results).` : `Simulated demo data (dry run), refreshed every ${s.metrics_poll_minutes} min.`)}
           ${s.image_generation ? check(s.image_generation.configured, "Ad image generation", s.image_generation.configured ? `FLUX.1 [schnell] on Cloudflare Workers AI (${esc(s.image_generation.model)}). Used today: ${s.image_generation.used_today} of ${s.image_generation.daily_limit} (IMAGE_DAILY_LIMIT).` : "Add CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN to .env (free Workers AI account). Without them, upload images yourself.") : ""}
         `),
-        group("Inbox, comments and posts", "DMs, the answer bot and Instagram posting.", `
+        group("Inbox, comments and posts", "DMs, the answer bot, and Instagram and LinkedIn posting.", `
           ${s.dm ? check(s.dm.webhook_configured, "DM webhook (Inbox)", s.dm.webhook_configured ? `Receiving Messenger / Instagram DMs at /webhooks/meta. ${s.dm.unread} unread. Replies use ${s.dm.page_token_set ? "META_PAGE_ACCESS_TOKEN" : "a Page token fetched with META_ACCESS_TOKEN"}${s.dm.human_agent_enabled ? "; HUMAN_AGENT replies on" : ""}.` : "Add META_APP_SECRET and META_WEBHOOK_VERIFY_TOKEN to .env and connect the webhook in the Meta app (README: DM webhook).") : ""}
           ${s.dm ? check(true, "Bot answers", `PDF search: ${s.dm.embeddings ? "keywords + meaning (Cloudflare bge-m3)" : "keywords (BM25); set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN for meaning-based search"}. DMs: ${s.dm.autoreply ? "auto-send ON" : "drafts only"}${s.dm.autoreply ? (s.dm.pdf_autoreply ? ", exact PDF sentences sent too" : ", PDF answers stay drafts (DM_PDF_AUTOREPLY=false)") : ""}. Comments: ${s.dm.comment_autoreply ? "auto-answer ON (FAQ and exact PDF sentences only; phone numbers hidden)" : "drafts only (COMMENT_AUTOREPLY=false)"}.`) : ""}
           ${s.posts ? check(s.posts.ready, "Instagram posts", s.meta_dry_run ? "Dry run: approved posts are logged, not sent to Instagram." : s.posts.public_base_url_set ? "PUBLIC_BASE_URL is set: Instagram can download post images and Reels from Milo." : "Set PUBLIC_BASE_URL in .env to your ngrok https address: Instagram downloads post images and Reels from there.") : ""}
+          ${s.linkedin ? check(s.linkedin.ready, "LinkedIn Page posts", s.linkedin.dry_run ? "Dry run (LINKEDIN_DRY_RUN=true): approved LinkedIn posts are logged, not sent." : s.linkedin.configured ? `Posting to the Page as LINKEDIN_ORGANIZATION_ID · LinkedIn API ${esc(s.linkedin.api_version)}. Tokens last 60 days${s.linkedin.token_days_left != null ? `; this one has ${s.linkedin.token_days_left} day(s) left` : " (set LINKEDIN_TOKEN_EXPIRES_AT to get a warning)"}.` : "Add LINKEDIN_ACCESS_TOKEN and LINKEDIN_ORGANIZATION_ID to .env (README: LinkedIn Page posts).") : ""}
           ${row("Instagram DMs check", "Run a check", `Checks what Instagram DMs need on Meta's side. Read-only: changes nothing.<div class="mt-2"><button type="button" data-ig-check class="rounded-lg border border-line px-3 py-1.5 text-xs text-ink hover:bg-accent-soft">Check Instagram DM setup</button></div><div id="igCheck" aria-live="polite"></div>`)}
         `),
         group("Research", "Extra context Milo reads before writing.", `
@@ -2347,7 +2354,7 @@
     ["saved", "Saves"], ["shares", "Shares"], ["replies", "Replies"], ["total_interactions", "Interactions"],
     ["follows", "New followers"], ["profile_visits", "Profile visits"], ["ig_reels_avg_watch_time", "Watch time"]];
   function resultsPanel(p) {
-    if (p.status !== "published") return "";
+    if (p.status !== "published" || p.platform === "linkedin") return "";
     const r = p.insights || {};
     const fmt = (k, v) => k === "ig_reels_avg_watch_time" ? `${(v / 1000).toFixed(1)} s` : Number(v).toLocaleString();
     const tiles = RESULT_LABELS.filter(([k]) => k in r).map(([k, l]) => `<div class="rounded-lg bg-bg px-3 py-2"><div class="text-[11px] text-muted">${l}</div><div class="text-lg font-semibold tabular-nums">${fmt(k, r[k])}</div></div>`).join("");
@@ -2372,13 +2379,26 @@
     return `${v}:00${sign}${pad2(Math.floor(Math.abs(off) / 60))}:${pad2(Math.abs(off) % 60)}`;
   }
   const whenLabel = (iso) => new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
-  function captionStats(text) {
+  function captionStats(text, platform) {
+    if (platform === "linkedin") return `<span class="${text.length > 3000 ? "text-danger" : ""}">${text.length}/3000 characters · the first ~200 show before "…see more"</span>`;
     const tags = (text.match(/#\w+/g) || []).length, mentions = (text.match(/@[\w.]+/g) || []).length;
     const bad = text.length > 2200 || tags > 30 || mentions > 20;
     return `<span class="${bad ? "text-danger" : ""}">${text.length}/2200 characters · ${tags}/30 hashtags · ${mentions}/20 mentions</span>`;
   }
   const frameUrl = (p, i) => `/api/posts/${p.id}/preview/${i}?t=${Date.now()}`;
+  function linkedinPreview(p, imgs) {
+    const grid = imgs.length > 1 ? `<div class="grid grid-cols-2 gap-0.5">${imgs.slice(0, 4).map((src, i) => `<div style="position:relative;aspect-ratio:1"><img src="${src}" alt="" style="width:100%;height:100%;object-fit:cover">${i === 3 && imgs.length > 4 ? `<span style="position:absolute;inset:0;display:grid;place-items:center;background:rgba(0,0,0,.45);color:#fff;font-weight:600">+${imgs.length - 4}</span>` : ""}</div>`).join("")}</div>`
+      : imgs.length ? `<img src="${imgs[0]}" alt="" style="width:100%;display:block;max-height:375px;object-fit:cover">` : "";
+    const text = p.caption || "";
+    const short = text.length > 200 ? esc(text.slice(0, 200)) + '<span class="text-muted">…see more</span>' : esc(text);
+    return `<div class="ig-phone"><div class="flex items-center gap-2 px-3 pt-3"><span style="display:grid;place-items:center;width:36px;height:36px;border-radius:6px;background:#0A66C2;color:#fff;font-size:13px;font-weight:700">in</span>
+        <span class="leading-tight"><b class="block text-[13px]">Your Page</b><span class="text-[11px] text-muted">Followers · now · 🌐</span></span></div>
+      <p class="px-3 py-2 text-[13px] leading-snug" style="white-space:pre-line">${short || '<span class="text-muted">Write the post text</span>'}</p>${grid}
+      <div class="border-t border-line py-2 text-[11px] text-muted" style="display:flex;justify-content:space-around"><span>Like</span><span>Comment</span><span>Repost</span><span>Send</span></div></div>
+      <p class="mt-2 text-center text-xs text-muted">LinkedIn preview (approximate) · ${imgs.length > 1 ? `${imgs.length} images` : imgs.length ? "1 image" : "text only"}</p>`;
+  }
   function postPreview(p, imgs) {
+    if (p.platform === "linkedin") return linkedinPreview(p, imgs);
     const first = imgs[0];
     if (p.kind === "story" || p.kind === "reel") {
       const media = p.kind === "reel" && p.has_video ? `<video src="/api/posts/${p.id}/video" controls muted playsinline loop></video>`
@@ -2415,48 +2435,55 @@
     list.innerHTML = rows.length ? `<div class="divide-y divide-line">${rows.map((p) => `
       <a href="#posts/${p.id}" class="flex gap-3 rounded-lg px-3 py-3 ${p.id === current ? "bg-accent-soft" : "hover:bg-accent-soft"}">
         <span class="size-10 shrink-0 overflow-hidden rounded-lg bg-bg">${p.image_count ? `<img src="/api/posts/${p.id}/images/0" alt="" class="h-full w-full object-cover">` : ""}</span>
-        <span class="min-w-0"><span class="flex flex-wrap items-center gap-1.5"><span class="text-sm font-medium">${POST_KIND[p.kind]}</span>${badge(POST_STATUS, p.status)}</span>
+        <span class="min-w-0"><span class="flex flex-wrap items-center gap-1.5"><span class="text-sm font-medium">${esc(p.kind_label || POST_KIND[p.kind])}</span><span class="rounded-full border border-line px-1.5 text-[10px] text-muted">${POST_PLATFORM[p.platform] || "Instagram"}</span>${badge(POST_STATUS, p.status)}</span>
           <span class="block truncate text-xs text-muted">${esc(p.caption || (p.kind === "story" ? "Story" : "No caption yet"))}</span>
           <span class="block text-[11px] text-muted">${p.published_at ? "Posted " + ago(p.published_at) : p.scheduled_at ? "For " + whenLabel(p.scheduled_at) : "Created " + ago(p.created_at)}${p.meta_mode === "dry_run" ? " · dry run" : ""}</span></span>
       </a>`).join("")}</div>`
       : `<p class="p-6 text-center text-sm text-muted">No posts yet. Click <b>New post</b>, or ask Milo in chat: "Make a Reel about our ceramic coating".</p>`;
     const p = rows.find((r) => r.id === current);
-    if (!p) { pane.innerHTML = emptyBox("Create your first Instagram post", "Pick a photo, carousel, Reel or Story, add images (upload or AI), write a caption, and request approval.", '<button type="button" data-post-new class="mt-4 h-9 rounded-lg bg-accent px-4 text-sm font-medium text-accent-fg">New post</button>'); return; }
+    if (!p) { pane.innerHTML = emptyBox("Create your first post", "Pick Instagram or LinkedIn, choose the post type, add images (upload or AI), write the text, and request approval.", '<button type="button" data-post-new class="mt-4 h-9 rounded-lg bg-accent px-4 text-sm font-medium text-accent-fg">New post</button>'); return; }
     const imgs = Array.from({ length: p.image_count }, (_, i) => `/api/posts/${p.id}/images/${i}?v=${encodeURIComponent(p.created_at)}-${p.image_count}`);
     const editable = p.status === "draft" || p.status === "failed";
     let approval = "";
     if (p.approval_id && p.status === "pending_approval") {
       try { const a = (await api("/api/approvals?status=pending")).find((x) => x.id === p.approval_id); if (a) approval = approvalCard(a, { showCampaign: false }); } catch { /* shown on Approvals */ }
     }
-    const canAdd = editable && p.image_count < POST_MAX[p.kind];
+    const li = p.platform === "linkedin", where = POST_PLATFORM[p.platform] || "Instagram";
+    const maxImgs = p.max_images ?? POST_MAX[p.kind];
+    const canAdd = editable && p.image_count < maxImgs;
     pane.innerHTML = `
       <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div class="min-w-0">
-          <div class="mb-3 flex flex-wrap items-center gap-2"><span class="font-display text-lg">${POST_KIND[p.kind]} #${p.id}</span>${badge(POST_STATUS, p.status)}${p.meta_mode === "dry_run" ? '<span class="rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">dry run: not on Instagram</span>' : ""}</div>
-          ${p.status === "published" ? `<div class="mb-3 rounded-lg bg-ok/10 p-3 text-sm text-ok">Posted ${ago(p.published_at)}. ${p.permalink ? `<a class="font-medium underline" href="${safeUrl(p.permalink)}" target="_blank" rel="noopener">View on Instagram</a>` : p.meta_mode === "dry_run" ? "Dry run: nothing was sent to Instagram." : ""}</div>` : ""}
+          <div class="mb-3 flex flex-wrap items-center gap-2"><span class="font-display text-lg">${where} ${esc(p.kind_label || POST_KIND[p.kind])} #${p.id}</span>${badge(POST_STATUS, p.status)}${p.meta_mode === "dry_run" ? `<span class="rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">dry run: not on ${where}</span>` : ""}</div>
+          ${p.status === "published" ? `<div class="mb-3 rounded-lg bg-ok/10 p-3 text-sm text-ok">Posted ${ago(p.published_at)}. ${p.permalink ? `<a class="font-medium underline" href="${safeUrl(p.permalink)}" target="_blank" rel="noopener">View on ${where}</a>` : p.meta_mode === "dry_run" ? `Dry run: nothing was sent to ${where}.` : ""}</div>` : ""}
           ${resultsPanel(p)}
           ${p.status === "failed" && p.error ? `<div class="mb-3 rounded-lg bg-danger/5 p-3 text-sm text-danger"><b>Not posted:</b> ${esc(p.error)}<br><span class="text-muted">Fix it if needed, then request publishing again.</span></div>` : ""}
           ${p.status === "scheduled" ? `<div class="mb-3 rounded-lg bg-accent-soft p-3 text-sm text-accent">Approved. Milo posts it on ${whenLabel(p.scheduled_at)} (Milo must be running then).</div>` : ""}
           ${approval ? `<div class="mb-3">${approval}</div>` : ""}
           <fieldset ${editable ? "" : "disabled"} class="space-y-4">
+            <div><div class="mb-1 text-xs font-medium text-muted">Where</div>
+              <div class="seg inline-flex flex-wrap gap-1 rounded-full border border-line bg-surface p-1">${Object.entries(POST_PLATFORM).map(([k, l]) => `<button type="button" data-post-platform="${k}" aria-pressed="${p.platform === k}" class="rounded-full px-3 py-1 text-sm">${l}</button>`).join("")}</div>
+              ${li ? '<p class="mt-1 text-[11px] text-muted">Posted publicly on your LinkedIn Page, as the Page.</p>' : ""}</div>
             <div><div class="mb-1 text-xs font-medium text-muted">Type</div>
-              <div class="seg inline-flex flex-wrap gap-1 rounded-full border border-line bg-surface p-1">${Object.entries(POST_KIND).map(([k, l]) => `<button type="button" data-post-kind="${k}" aria-pressed="${p.kind === k}" class="rounded-full px-3 py-1 text-sm">${l}</button>`).join("")}</div></div>
-            ${p.kind === "story" ? '<p class="text-xs text-muted">Stories have no caption on Instagram. The image is shown full-screen (9:16) for 24 hours.</p>' : `
-            <div><label class="mb-1 block text-xs font-medium text-muted" for="postCaption">Caption</label>
-              <textarea id="postCaption" rows="5" maxlength="2200" class="w-full resize-none rounded-lg border border-line bg-surface px-3 py-2 text-sm" placeholder="Write the caption. A few relevant hashtags at the end, e.g. #cardetailing #delhi">${esc(p.caption || "")}</textarea>
-              <div id="postCount" class="mt-1 text-[11px] text-muted">${captionStats(p.caption || "")}</div></div>`}
-            ${p.kind === "story" || p.kind === "reel" ? `
+              <div class="seg inline-flex flex-wrap gap-1 rounded-full border border-line bg-surface p-1">${Object.entries(kindsFor(p)).map(([k, l]) => `<button type="button" data-post-kind="${k}" aria-pressed="${p.kind === k}" class="rounded-full px-3 py-1 text-sm">${l}</button>`).join("")}</div></div>
+            ${p.kind === "story" && !li ? '<p class="text-xs text-muted">Stories have no caption on Instagram. The image is shown full-screen (9:16) for 24 hours.</p>' : `
+            <div><label class="mb-1 block text-xs font-medium text-muted" for="postCaption">${li ? "Post text" : "Caption"}</label>
+              <textarea id="postCaption" rows="${li ? 8 : 5}" maxlength="${li ? 3000 : 2200}" class="w-full resize-none rounded-lg border border-line bg-surface px-3 py-2 text-sm" placeholder="${li ? "Lead with the point in the first two lines. 3-5 hashtags at the end, e.g. #plantcare #smallbusiness" : "Write the caption. A few relevant hashtags at the end, e.g. #cardetailing #delhi"}">${esc(p.caption || "")}</textarea>
+              <div id="postCount" class="mt-1 text-[11px] text-muted" data-platform="${esc(p.platform || "instagram")}">${captionStats(p.caption || "", p.platform)}</div></div>`}
+            ${!li && (p.kind === "story" || p.kind === "reel") ? `
             <div class="rounded-lg border border-line p-3"><div class="mb-2 text-xs font-medium text-muted">Text on image <span class="font-normal">(optional · drawn onto the ${p.kind === "reel" ? "video" : "Story"}, since Instagram's API can't add text or stickers)</span></div>
               <div class="grid gap-2">
                 <input id="ovHeadline" data-ov maxlength="60" value="${esc((p.overlay || {}).headline || "")}" class="h-9 rounded-lg border border-line bg-surface px-3 text-sm font-semibold" placeholder="Headline, e.g. Car wash at your doorstep">
                 <input id="ovDetails" data-ov maxlength="90" value="${esc((p.overlay || {}).details || "")}" class="h-9 rounded-lg border border-line bg-surface px-3 text-sm" placeholder="Details, e.g. Foam wash from ₹399 · Delhi NCR">
                 <input id="ovCta" data-ov maxlength="30" value="${esc((p.overlay || {}).cta || "")}" class="h-9 rounded-lg border border-line bg-surface px-3 text-sm" placeholder="Button text, e.g. DM us to book">
               </div><p class="mt-1 text-[11px] text-muted">The preview updates as you type. Emoji are left out (the font can't draw them).</p></div>` : ""}
-            <div><div class="mb-1 text-xs font-medium text-muted">Images (${p.image_count}/${POST_MAX[p.kind]})${p.kind === "reel" ? " · 3 seconds each in the video" : ""}</div>
+            ${li && p.kind === "text" ? '<p class="text-xs text-muted">Text-only post. Pick Photo or Multi-image to add pictures.</p>' : `<div><div class="mb-1 text-xs font-medium text-muted">Images (${p.image_count}/${maxImgs})${p.kind === "reel" ? " · 3 seconds each in the video" : ""}</div>
               <div class="flex flex-wrap gap-2">${imgs.map((src, i) => `<div class="ig-thumb"><img src="${src}" alt="Image ${i + 1}">${editable ? `<button type="button" data-post-img-del="${i}" aria-label="Remove image ${i + 1}" style="position:absolute;top:3px;right:3px" class="grid size-5 place-items-center rounded-full bg-ink/30 text-[11px] text-white">✕</button>` : ""}</div>`).join("")}
                 ${canAdd ? `<label class="ig-thumb grid cursor-pointer place-items-center border-dashed text-center text-xs text-muted hover:bg-accent-soft"><input type="file" accept="image/jpeg,image/png" multiple class="sr-only" data-post-upload="${p.id}"><span>+ Upload</span></label>` : ""}</div>
               ${canAdd ? `<div class="mt-2 flex gap-2"><input id="postPrompt" maxlength="600" class="h-9 min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 text-sm" placeholder="Or describe a picture for AI, e.g. shiny SUV after a foam wash, morning light">
-                <button type="button" data-post-gen class="h-9 shrink-0 rounded-lg border border-line px-3 text-sm hover:bg-accent-soft">✨ Generate</button></div>` : ""}</div>
+                <button type="button" data-post-gen class="h-9 shrink-0 rounded-lg border border-line px-3 text-sm hover:bg-accent-soft">✨ Generate</button></div>` : ""}
+              ${li ? `<div class="mt-2"><label class="mb-1 block text-xs font-medium text-muted" for="postAlt">Image description <span class="font-normal">(optional · read aloud by screen readers)</span></label>
+                <input id="postAlt" maxlength="300" value="${esc(p.alt_text || "")}" class="h-9 w-full rounded-lg border border-line bg-surface px-3 text-sm" placeholder="e.g. Monstera plant in a white pot by a sunny window"></div>` : ""}</div>`}
             <div><label class="mb-1 block text-xs font-medium text-muted" for="postWhen">When</label>
               <div class="flex flex-wrap items-center gap-2"><input id="postWhen" type="datetime-local" value="${toLocalInput(p.scheduled_at)}" class="h-9 rounded-lg border border-line bg-surface px-3 text-sm">
               <span class="text-xs text-muted">Leave empty to post right after you approve. Times are in this computer's time zone.</span></div></div>
@@ -2477,16 +2504,17 @@
     }
   }
   function postFields() {
-    const cap = $("postCaption"), when = $("postWhen");
+    const cap = $("postCaption"), when = $("postWhen"), alt = $("postAlt");
     const body = { scheduled_at: fromLocalInput(when ? when.value : "") };
     if (cap) body.caption = cap.value;
+    if (alt) body.alt_text = alt.value;
     if ($("ovHeadline")) body.overlay = { headline: $("ovHeadline").value, details: $("ovDetails").value, cta: $("ovCta").value };
     return body;
   }
   async function savePost(id) { return api(`/api/posts/${id}`, { method: "PATCH", body: JSON.stringify(postFields()) }); }
   let ovTimer = null;
   document.body.addEventListener("input", (e) => {
-    if (e.target.id === "postCaption") $("postCount").innerHTML = captionStats(e.target.value);
+    if (e.target.id === "postCaption") $("postCount").innerHTML = captionStats(e.target.value, $("postCount").dataset.platform);
     if (e.target.matches("[data-ov]")) {  // save the text, then reload the rendered 9:16 preview frame
       clearTimeout(ovTimer);
       ovTimer = setTimeout(async () => {
@@ -2507,7 +2535,7 @@
     renderPosts(id);
   });
   document.body.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-post-new],[data-post-kind],[data-post-img-del],[data-post-gen],[data-post-save],[data-post-request],[data-post-del],[data-post-insights]");
+    const t = e.target.closest("[data-post-new],[data-post-kind],[data-post-platform],[data-post-img-del],[data-post-gen],[data-post-save],[data-post-request],[data-post-del],[data-post-insights]");
     if (!t) return;
     const id = $("postEditor") && $("postEditor").dataset.postId;
     try {
@@ -2521,7 +2549,8 @@
         t.innerHTML = `<span class="inline-flex items-center gap-1">${spinner()} Checking…</span>`;
         await api(`/api/posts/${id}/insights/refresh`, { method: "POST" });
         toast("Results updated");
-      } else if (t.matches("[data-post-kind]")) { await api(`/api/posts/${id}`, { method: "PATCH", body: JSON.stringify({ ...postFields(), kind: t.dataset.postKind }) }); }
+      } else if (t.matches("[data-post-platform]")) { await api(`/api/posts/${id}`, { method: "PATCH", body: JSON.stringify({ ...postFields(), platform: t.dataset.postPlatform }) }); }
+      else if (t.matches("[data-post-kind]")) { await api(`/api/posts/${id}`, { method: "PATCH", body: JSON.stringify({ ...postFields(), kind: t.dataset.postKind }) }); }
       else if (t.matches("[data-post-img-del]")) { await api(`/api/posts/${id}/images/${t.dataset.postImgDel}`, { method: "DELETE" }); }
       else if (t.matches("[data-post-gen]")) {
         const prompt = $("postPrompt").value.trim();
@@ -2538,7 +2567,7 @@
         toast("Approval requested. Nothing is posted until you approve.");
         state.pendingCount += 1; renderNav();
       } else if (t.matches("[data-post-del]")) {
-        return confirmDialog({ title: "Delete this post?", body: "The draft and its images are deleted from Milo. Posts already on Instagram stay there.", ok: "Delete",
+        return confirmDialog({ title: "Delete this post?", body: "The draft and its images are deleted from Milo. Posts already on Instagram or LinkedIn stay there.", ok: "Delete",
           onOk: async () => { await api(`/api/posts/${id}`, { method: "DELETE" }); toast("Post deleted"); location.hash = "#posts"; renderPosts(); } });
       }
     } catch (err) { toast(err.message, "error"); }

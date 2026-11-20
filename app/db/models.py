@@ -170,9 +170,11 @@ class Lead(Doc):
 
 
 class SocialPost(Doc):
-    """An organic Instagram post (not an ad): photo, carousel, Reel or Story. Published only after approval."""
+    """An organic post (not an ad) for Instagram (photo, carousel, Reel, Story) or the LinkedIn Page (text, photo,
+    multi_image). Published only after approval."""
     collection: ClassVar[str] = "social_posts"
-    kind: str = "photo"  # photo | carousel | reel | story
+    platform: str = "instagram"  # instagram | linkedin
+    kind: str = "photo"  # instagram: photo | carousel | reel | story ; linkedin: text | photo | multi_image
     caption: str = ""  # stories have no caption on Instagram
     # Stories/Reels: text drawn onto the image (the API can't add text or stickers): headline, details, cta
     overlay: dict = Field(default_factory=dict)
@@ -182,8 +184,10 @@ class SocialPost(Doc):
     scheduled_at: Optional[datetime] = None  # publish at this time (UTC); None = right after approval
     # draft -> pending_approval -> scheduled -> publishing -> published | failed ; rejected -> draft
     status: str = "draft"
-    meta_mode: str = ""  # live | dry_run
+    meta_mode: str = ""  # live | dry_run (for LinkedIn posts too: how it was published)
     meta_media_id: str = ""
+    linkedin_post_urn: str = ""  # urn:li:share:... once on LinkedIn (saved first, so it is never posted twice)
+    alt_text: str = ""  # LinkedIn: image description for screen readers (all images)
     permalink: str = ""
     error: str = ""
     source: str = "user"  # user | agent

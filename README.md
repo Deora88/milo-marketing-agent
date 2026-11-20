@@ -69,6 +69,7 @@ app/
   mcp_server/        milo-meta MCP server: draft, list, metrics, request_*, research tools
   agent/             ADK agent (McpToolset), prompt, tool guard, runner
   meta/              throttled Meta client (usage headers, backoff, dry-run) + campaign builder
+  linkedin/          LinkedIn REST client (Posts + Images API, versioned headers, retries, dry-run)
   metrics/           MetricsProvider interface: Meta Insights (live) and simulated (dry run / demo)
   jobs/              APScheduler: pulls metrics every 15 min (per-campaign failures don't stop the pull)
   db/                MongoDB: models (Campaign, Approval, MetricSnapshot, AuditLog, InboundMessage, FaqEntry, Lead, SocialPost,
@@ -84,7 +85,7 @@ app/
   campaign_state.py  draft rules, requirements checklist (known / assumed / missing), version history
   analysis.py        period-over-period and creative comparison (facts, calculations, assumptions)
   labs/              Trends page prototype: own-account patterns, competitor watch, hashtags
-  social/            Instagram posts (drafts, media checks, publishing, results) and post comments
+  social/            Instagram + LinkedIn posts (drafts, media checks, publishing, results) and post comments
   dm/instagram_setup.py  checks the Page / Instagram link and webhook subscription
   util/redact.py     masks tokens and keys in error text
   api/               routes: auth (sign-in, users), chat (SSE), campaigns (+ change requests), approvals, insights (status,
@@ -95,6 +96,7 @@ docker-compose.yml   Milo on 127.0.0.1:8000 + optional local MongoDB (profile lo
 scripts/
   add_user.py        add users, change a role, reset a password, disable / enable, list users
   check_mongo.py     checks the MongoDB connection on its own
+  linkedin_token.py  LinkedIn sign-in (OAuth) -> access token + Page id for .env (run every ~60 days)
 web/
   index.html         the Milo UI (single file, served at /)
   milo.css           prebuilt Tailwind styles; tokens in tailwind.config.js
@@ -301,7 +303,7 @@ primary text, with a "based on" note. The chat shows the sources under the reply
 | GET | `/api/comments` | Comments on your Instagram / Facebook posts, newest first (`?status=open`, `new`, `replied`, `hidden`) and the unread count |
 | POST | `/api/comments/{id}/reply` · `/hide` · `/suggest` · `/api/comments/read` | Public reply as the business (`{text}`), hide / show (`{hidden}`), bot draft from the FAQ (never posts), mark read |
 | GET | `/api/instagram/check` | Read-only check of the Meta-side setup for Instagram DMs |
-| GET · POST | `/api/posts` | Instagram posts: list, create a draft (`kind`, `caption`, `scheduled_at`) |
+| GET · POST | `/api/posts` | Instagram / LinkedIn posts: list, create a draft (`platform`, `kind`, `caption`, `scheduled_at`, `alt_text`) |
 | GET · PATCH · DELETE | `/api/posts/{id}` | One post: read, edit (draft/failed only), delete |
 | POST · DELETE | `/api/posts/{id}/images`, `/generate-image`, `/images/{i}` | Add (upload or AI) / remove images |
 | POST | `/api/posts/{id}/request` | Request approval to publish (formats media, builds the Reel video) |
@@ -444,6 +446,34 @@ the same approval gate as ads: nothing is posted until you click **Approve**.
   `instagram_manage_insights` permission. Instagram doesn't share Story likes, and hides numbers under 5.
 - **Story replies and mentions** arrive as DMs and show in the Inbox as "Replied to your story" or "Mentioned
   you in their story" (with a link while Meta's story link is valid).
+
+## LinkedIn Page posts (text, photo, multi-image)
+The same **Posts** page also posts to the business's **LinkedIn Page**, as the Page, publicly. Pick **LinkedIn**
+under *Where*. Same approval gate, statuses and scheduler as Instagram: nothing is posted until **Approve**.
+
+- **Types:** Text (no image), Photo (1 image), Multi-image (2–20 images; LinkedIn allows multi-image only for
+  organic posts). Images are stored uncropped (max 1920 px); one optional image description (alt text).
+- **Text:** up to 3,000 characters. LinkedIn reads post text as *little text*, where `| { } @ [ ] ( ) < > # \ * _ ~`
+  are markup and an unescaped one can cut the post off, so Milo escapes them all and turns each `#word` into a
+  real hashtag (`app/social/linkedin.py`, `to_little_text`). @mentions are not supported yet (posted as text).
+- **How it posts:** `POST /rest/images?action=initializeUpload` (owner = the Page) → `PUT` the JPEG to the
+  `uploadUrl` → wait until `GET /rest/images/{urn}` is `AVAILABLE` → `POST /rest/posts` (`visibility PUBLIC`,
+  `MAIN_FEED`, `lifecycleState PUBLISHED`, `content.media` or `content.multiImage`). The new post's URN comes
+  back in `x-restli-id` and is saved at once, so a later error can't post it twice. A create that fails with a
+  5xx is not retried (it may have gone through): the post is marked *failed* with the error; check the Page first.
+  Every call sends `LinkedIn-Version: LINKEDIN_API_VERSION` (YYYYMM; each version is supported for at least a year).
+- **Chat:** "Write a LinkedIn post about our new plant-care workshop" → `create_linkedin_post` →
+  `request_post_publish`.
+- **Not yet:** results (likes, impressions) and comments for LinkedIn posts; video and document posts.
+- **Setup:**
+  1. A LinkedIn developer app linked to the company Page, verified by a Page super admin, with the
+     **Community Management API** approved (it must be the only product on that app; registered companies only).
+  2. In the app's Auth tab add the redirect `http://localhost:8765/callback`, then run
+     `uv run python scripts/linkedin_token.py --client-id <id> --client-secret <secret>` and sign in as a Page
+     admin. It prints `LINKEDIN_ACCESS_TOKEN`, `LINKEDIN_TOKEN_EXPIRES_AT` and `LINKEDIN_ORGANIZATION_ID`.
+  3. Keep `LINKEDIN_DRY_RUN=true` to try the flow (approved posts are logged, not sent), then set it to `false`.
+- **Token:** lasts 60 days (refresh tokens are only for LinkedIn's approved partners). The status page warns 7 days
+  before `LINKEDIN_TOKEN_EXPIRES_AT`; a 401 from LinkedIn means: run the script again.
 
 ## PDF answers (search and exact quotes)
 How the DM and comment bot answers from your PDFs (`app/dm/knowledge.py`, `app/dm/embeddings.py`):

@@ -45,7 +45,13 @@ async def _wait_ready(client: MetaClient, container: str, token: str, sleep=asyn
 
 
 async def publish(post_id: int, client: MetaClient | None = None, sleep=asyncio.sleep) -> SocialPost:
-    """Publish now. The post must already be approved (status scheduled or pending_approval -> publishing)."""
+    """Publish now. The post must already be approved (status scheduled or pending_approval -> publishing).
+    LinkedIn posts are handed to app/social/linkedin.py (same approval gate, same statuses)."""
+    current = store.get(SocialPost, post_id)
+    if current is not None and current.platform == "linkedin":
+        from app.social import linkedin
+
+        return await linkedin.publish(post_id, sleep=sleep)
     p = store.claim(SocialPost, post_id, {"status": {"$in": ["pending_approval", "scheduled"]}},
                     {"status": "publishing", "error": "", "publishing_started_at": now()})
     if p is None:
@@ -133,11 +139,12 @@ def fail_stuck_posts(older_than: timedelta = STUCK_AFTER) -> list[int]:
         started = p.publishing_started_at
         if started is not None and started > cutoff:
             continue  # still running
-        if p.meta_mode == "live" and p.meta_media_id:
+        where = "LinkedIn" if p.platform == "linkedin" else "Instagram"
+        if p.meta_mode == "live" and (p.meta_media_id or p.linkedin_post_urn):
             changes = {"status": "published", "published_at": p.published_at or now(), "error": ""}
         else:
-            changes = {"status": "failed", "error": "Publishing was interrupted (Milo stopped or crashed). Check "
-                                                     "Instagram before retrying: the post may already be live."}
+            changes = {"status": "failed", "error": f"Publishing was interrupted (Milo stopped or crashed). Check "
+                                                     f"{where} before retrying: the post may already be live."}
         if store.claim(SocialPost, p.id, {"status": "publishing"}, changes):
             store.audit("post_recovered", post_id=p.id, status=changes["status"])
             done.append(p.id)

@@ -1,4 +1,4 @@
-"""Instagram posts (organic): drafts, images, approval requests (localhost only, like every /api route),
+"""Organic posts (Instagram and the LinkedIn Page): drafts, images, approval requests (localhost only, like every /api route),
 plus the one public route Meta downloads post media from (/media/<token>/<file>)."""
 from pathlib import Path
 from typing import Optional
@@ -21,7 +21,8 @@ def _out(p: SocialPost) -> dict:
     pending = store.find(Approval, {"post_id": p.id, "status": {"$in": ["pending", "executing"]}}, limit=1)
     d = p.model_dump(exclude={"images", "video_path", "media_token"})
     d.update(image_count=len(p.images), has_video=bool(p.video_path),
-             approval_id=pending[0].id if pending else None, kind_label=posts.KINDS.get(p.kind, p.kind))
+             approval_id=pending[0].id if pending else None, kind_label=posts.kind_label(p),
+             max_images=posts.max_images(p.platform, p.kind))
     return d
 
 
@@ -40,13 +41,17 @@ class StoryText(BaseModel):
 
 
 class PostIn(BaseModel):
+    platform: str = "instagram"  # instagram | linkedin
     kind: str = "photo"
     caption: str = Field("", max_length=5000)
+    alt_text: str = Field("", max_length=1000)
     scheduled_at: Optional[str] = None  # ISO time with timezone, e.g. 2026-11-05T18:30+05:30
     overlay: Optional[StoryText] = None
 
 
 class PostPatch(BaseModel):
+    platform: Optional[str] = None  # switch a draft between Instagram and LinkedIn
+    alt_text: Optional[str] = Field(None, max_length=1000)
     kind: Optional[str] = None
     caption: Optional[str] = Field(None, max_length=5000)
     scheduled_at: Optional[str] = None  # send null to post right after approval
@@ -61,7 +66,8 @@ def list_posts():
 @router.post("")
 def create_post(body: PostIn):
     return _out(_call(posts.create, body.kind, body.caption, body.scheduled_at,
-                      overlay=body.overlay.model_dump() if body.overlay else None))
+                      overlay=body.overlay.model_dump() if body.overlay else None, platform=body.platform,
+                      alt_text=body.alt_text))
 
 
 @router.get("/{post_id}")
@@ -73,7 +79,8 @@ def get_post(post_id: int):
 def update_post(post_id: int, body: PostPatch):
     sched = body.scheduled_at if "scheduled_at" in body.model_fields_set else "__keep__"
     return _out(_call(posts.update, post_id, body.kind, body.caption, sched,
-                      body.overlay.model_dump() if body.overlay else None))
+                      body.overlay.model_dump() if body.overlay else None, platform=body.platform,
+                      alt_text=body.alt_text))
 
 
 @router.delete("/{post_id}")

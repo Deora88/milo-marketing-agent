@@ -12,7 +12,8 @@ _PATTERNS = [
 ]
 
 _SECRET_FIELDS = ("openrouter_api_key", "tavily_api_key", "meta_access_token", "meta_page_access_token",
-                  "meta_app_secret", "meta_webhook_verify_token", "cloudflare_api_token", "api_token")
+                  "meta_app_secret", "meta_webhook_verify_token", "cloudflare_api_token", "api_token",
+                  "linkedin_access_token")
 
 
 def _configured_secrets() -> list[str]:

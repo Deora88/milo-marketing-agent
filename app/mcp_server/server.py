@@ -388,12 +388,55 @@ async def create_instagram_post(kind: str, caption: str, image_prompts: list[str
 
 
 @mcp.tool()
+async def create_linkedin_post(text: str, image_prompts: list[str] | None = None, scheduled_at: str = "",
+                               alt_text: str = "") -> dict:
+    """Draft an ORGANIC post for the business's LinkedIn Page (not an ad). Saves a draft only; nothing is posted.
+    Afterwards call request_post_publish so the user can approve it.
+
+    Args:
+        text: Post text in a professional voice (max 3000 characters). The first 2-3 lines show before
+            "...see more", so lead with the point. 3-5 relevant hashtags at the end are fine (#plantcare).
+        image_prompts: Optional. None/empty = text-only post; 1 prompt = one image; 2-20 = a multi-image post.
+            One scene description per image (subject, setting, mood, light; never text, prices or logos).
+        scheduled_at: Optional publish time, ISO with timezone, e.g. "2026-11-05T18:30+05:30". Empty = post
+            right after the user approves.
+        alt_text: Optional image description for screen readers (max 300 characters).
+    """
+    from app.api.posts import generate_for_post
+    from app.social import posts
+
+    prompts = [p for p in (image_prompts or []) if str(p).strip()][: posts.LINKEDIN_MAX_IMAGES["multi_image"]]
+    kind = "text" if not prompts else "photo" if len(prompts) == 1 else "multi_image"
+    try:
+        p = posts.create(kind, text, scheduled_at or None, source="agent", platform="linkedin", alt_text=alt_text)
+    except posts.PostError as exc:
+        return {"status": "invalid", "errors": [str(exc)]}
+    made, problems = 0, []
+    for prompt in prompts:
+        try:
+            await generate_for_post(p.id, prompt, source="agent")
+            made += 1
+        except Exception as exc:  # noqa: BLE001 - image service down / limit: keep the draft, tell the user
+            problems.append(redact(getattr(exc, "detail", exc)))
+            break
+    if prompts and made < posts.LINKEDIN_MIN_IMAGES[kind]:  # e.g. only 1 of 3 images made: fit the type to it
+        posts.update(p.id, kind="photo" if made == 1 else "text")
+    p = posts.get(p.id)
+    return {"status": "draft_saved", "post_id": p.id, "platform": "linkedin", "kind": p.kind, "images": made,
+            "message": "LinkedIn draft saved"
+                       + (f" with {made} image(s). " if made else ". ")
+                       + (f"Image generation problem: {problems[0]}. The user can upload images on the Posts page. "
+                          if problems else "")
+                       + "Ask the user to check it on the Posts page, then call request_post_publish."}
+
+
+@mcp.tool()
 def request_post_publish(post_id: int) -> dict:
-    """Ask the user to approve publishing an Instagram post draft (now, or at its scheduled time).
+    """Ask the user to approve publishing a post draft (Instagram or LinkedIn; now, or at its scheduled time).
     Does NOT post by itself.
 
     Args:
-        post_id: Milo post id (from create_instagram_post).
+        post_id: Milo post id (from create_instagram_post or create_linkedin_post).
     """
     from app.social import posts
 
@@ -460,6 +503,7 @@ TOOL_NAMES = [
     "read_landing_page",
     "generate_ad_image",
     "create_instagram_post",
+    "create_linkedin_post",
     "request_post_publish",
 ]
 

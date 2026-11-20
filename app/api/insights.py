@@ -54,6 +54,22 @@ def _comments_unread(db_ok: bool) -> int:
     return comments.unread() if db_ok else 0
 
 
+def _linkedin_status(s) -> dict:
+    """LinkedIn Page posts: whether a token and Page id are set, and how close the 60-day token is to expiring."""
+    from datetime import date
+
+    days_left = None
+    try:
+        if s.linkedin_token_expires_at:
+            days_left = (date.fromisoformat(s.linkedin_token_expires_at[:10]) - date.today()).days
+    except ValueError:
+        days_left = None
+    configured = bool(s.linkedin_access_token and s.linkedin_organization_id)
+    return {"dry_run": s.linkedin_dry_run, "configured": configured, "api_version": s.linkedin_api_version,
+            "token_days_left": days_left,
+            "ready": s.linkedin_dry_run or (configured and (days_left is None or days_left > 0))}
+
+
 @router.get("/status")
 def status():
     s = get_settings()
@@ -76,6 +92,7 @@ def status():
             "public_base_url_set": s.public_base_url.startswith("https://"),
             "ready": s.meta_dry_run or s.public_base_url.startswith("https://"),
         },
+        "linkedin": _linkedin_status(s),
         "spend": {
             "allowed": s.meta_allow_spend,
             "max_daily_budget_inr": s.max_daily_budget_inr,

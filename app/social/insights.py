@@ -40,6 +40,9 @@ async def fetch(post_id: int, client: MetaClient | None = None) -> SocialPost:
     p = store.get(SocialPost, post_id)
     if p is None or p.status != "published":
         raise ValueError("Results exist only for published posts.")
+    if p.platform == "linkedin":
+        return store.update(SocialPost, p.id, {"insights_note": "Milo doesn't read LinkedIn post results yet. "
+                                                                "See them on the post (link above)."})
     if p.meta_mode != "live" or not p.meta_media_id:
         return store.update(SocialPost, p.id, {"insights_note": "Dry run: this post isn't on Instagram, so there "
                                                                 "are no results."})
@@ -101,7 +104,7 @@ def due(p: SocialPost) -> bool:
 
 async def refresh_due() -> list[int]:
     done = []
-    for p in store.find(SocialPost, {"status": "published", "meta_mode": "live"}):
+    for p in store.find(SocialPost, {"status": "published", "meta_mode": "live", "platform": {"$ne": "linkedin"}}):
         if due(p):
             try:
                 await fetch(p.id)

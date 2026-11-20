@@ -94,6 +94,14 @@ class Settings(BaseSettings):
     # this to the tunnel or server address that reaches Milo, e.g. https://name.ngrok-free.dev (no trailing /).
     public_base_url: str = ""
 
+    # LinkedIn Page posts (organic, Community Management API). The token is a 3-legged member token with
+    # w_organization_social from a Page admin; it lasts 60 days. LINKEDIN_DRY_RUN=true = never call LinkedIn.
+    linkedin_access_token: str = ""
+    linkedin_organization_id: str = ""  # the Page's numeric id (or urn:li:organization:<id>)
+    linkedin_api_version: str = "202610"  # LinkedIn-Version header, YYYYMM; each version is supported >= 1 year
+    linkedin_dry_run: bool = True
+    linkedin_token_expires_at: str = ""  # optional, e.g. 2027-01-18: the status page warns 7 days before
+
     # Ad image generation (Cloudflare Workers AI, FLUX.1 [schnell]; free daily allowance)
     cloudflare_account_id: str = ""
     cloudflare_api_token: str = ""

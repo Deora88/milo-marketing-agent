@@ -14,8 +14,11 @@ def list_approvals(status: str = "pending"):
     """status = pending | approved | rejected | executing | all. Each row includes the campaign name."""
     rows = store.find(Approval, {} if status == "all" else {"status": status}, sort=[("_id", -1)])
     names = {c.id: c.name for c in store.find(Campaign, {"_id": {"$in": list({a.campaign_id for a in rows})}})}
-    kinds = {p.id: p.kind for p in store.find(SocialPost, {"_id": {"$in": [a.post_id for a in rows if a.post_id]}})}
-    return [a.model_dump() | {"campaign_name": names.get(a.campaign_id, ""), "post_kind": kinds.get(a.post_id, "")}
+    found = store.find(SocialPost, {"_id": {"$in": [a.post_id for a in rows if a.post_id]}})
+    kinds = {p.id: p.kind for p in found}
+    platforms = {p.id: p.platform for p in found}
+    return [a.model_dump() | {"campaign_name": names.get(a.campaign_id, ""), "post_kind": kinds.get(a.post_id, ""),
+                              "post_platform": platforms.get(a.post_id, "")}
             for a in rows]
 
 
@@ -41,7 +44,9 @@ async def approve(approval_id: int):
         store.claim(Approval, a.id, {"status": "executing"},
                     {"status": "pending", "executing_since": None, "decided_by": ""})
         store.audit("action_failed", approval_id=a.id, error=redact(exc))
-        raise HTTPException(502, f"Meta call failed: {redact(exc)}") from exc
+        post = store.get(SocialPost, a.post_id) if a.post_id else None
+        where = "LinkedIn" if post and post.platform == "linkedin" else "Meta"
+        raise HTTPException(502, f"{where} call failed: {redact(exc)}") from exc
     done = {"status": "approved", "decided_at": now(), "executing_since": None}
     # If recovery already put a slow run back to pending, the change still happened on Meta: record it as approved.
     a = (store.claim(Approval, a.id, {"status": "executing"}, done)

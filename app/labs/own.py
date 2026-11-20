@@ -50,7 +50,8 @@ def _group(rows: list[tuple[str, float]]) -> list[dict]:
 
 def summary(days: int = DAYS) -> dict:
     since = now() - timedelta(days=days)
-    posts = [p for p in store.find(SocialPost, {"status": "published", "meta_mode": "live"})
+    posts = [p for p in store.find(SocialPost, {"status": "published", "meta_mode": "live",
+                                                   "platform": {"$ne": "linkedin"}})
              if p.published_at and p.published_at >= since]
     scored = [(p, *score(p)) for p in posts]
     scored = [(p, s, m) for p, s, m in scored if s is not None]
