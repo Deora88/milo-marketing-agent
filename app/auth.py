@@ -7,12 +7,14 @@
 - A session is a random 256-bit id in an HttpOnly, SameSite=Strict cookie. Only its SHA-256 is stored, so a
   copy of the database cannot be used to sign in. Sessions end after SESSION_HOURS, on sign-out, or when an
   admin disables the user or resets the password.
-- Sign-in is slowed down: MAX_FAILS wrong tries for one email (or from one address) lock it for LOCK_MINUTES.
+- Sign-in is slowed down: MAX_FAILS wrong tries for one email (or from one remote address; not 127.0.0.1, which
+  every local and tunnelled user shares) lock it for LOCK_MINUTES.
 - First run: while no user exists, the sign-in page offers "create the first admin". It is reachable only from
   this computer (the tunnel guard in app/security.py blocks /api through ngrok) and stops working as soon as one
   user exists.
 """
 import hashlib
+import ipaddress
 import hmac
 import re
 import secrets
@@ -106,10 +108,20 @@ def _locked(key: str) -> bool:
     return len(tries) >= MAX_FAILS
 
 
+def _loopback(ip: str) -> bool:
+    try:
+        return ipaddress.ip_address(ip).is_loopback
+    except ValueError:
+        return False
+
+
 def login(email: str, password: str, ip: str = "") -> tuple[str, User]:
     """Check the password and start a session. Returns (session id for the cookie, user)."""
     e = (email or "").strip().lower()
-    keys = [f"email:{e}"] + ([f"ip:{ip}"] if ip else [])
+    # The per-address lock only means something for a real remote address. On this computer (and through a tunnel,
+    # which also connects from 127.0.0.1) every user shares one address, so it would turn five wrong tries by
+    # anyone into a lock-out for everyone; the per-email lock still protects each account there.
+    keys = [f"email:{e}"] + ([f"ip:{ip}"] if ip and not _loopback(ip) else [])
     if any(_locked(k) for k in keys):
         store.audit("login_locked", user=e)
         raise AuthError(f"Too many wrong tries. Sign-in is locked for {LOCK_MINUTES} minutes.")

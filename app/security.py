@@ -42,7 +42,9 @@ UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
 # Sign-in (AUTH_REQUIRED=true): every /api route needs a session except these, and the ADMIN_ONLY ones need the
 # admin role. Kept in one place on purpose: a new route is protected by default, and the rules are easy to audit.
 OPEN_PATHS = {"/api/health", "/api/auth/state", "/api/auth/login", "/api/auth/setup", "/api/auth/logout"}
-ADMIN_ONLY = [re.compile(r"/api/approvals/\d+/(approve|reject)/?"), re.compile(r"/api/auth/users(/.*)?")]
+# Match any id segment, not only digits: FastAPI also reads "+5", " 5" or "5.0" as approval 5, and a stricter
+# pattern let an editor approve through /api/approvals/+5/approve. The routes check the role again (require_admin).
+ADMIN_ONLY = [re.compile(r"/api/approvals/[^/]+/(approve|reject)/?"), re.compile(r"/api/auth/users(/.*)?")]
 
 PROXY_HEADERS = ("x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "forwarded", "x-real-ip")
 WEBHOOK_PREFIX = "/webhooks/"
@@ -60,6 +62,18 @@ SECURITY_HEADERS = {
 def _plain(path: str) -> bool:
     """No ".", ".." or empty segments (and no backslash): the path means what its prefix says."""
     return "\\" not in path and all(seg not in ("", ".", "..") for seg in path.split("/")[1:])
+
+
+def require_admin(request: Request) -> None:
+    """Route-level copy of the ADMIN_ONLY rule (defence in depth: a path the middleware pattern misses still stops
+    here). No-op when sign-in is off (AUTH_REQUIRED=false: single user on this computer)."""
+    if not get_settings().auth_required:
+        return
+    user = getattr(request.state, "user", None)
+    if user is None or user.role != "admin":
+        from fastapi import HTTPException
+
+        raise HTTPException(403, "Only an admin can do this.")
 
 
 async def guard_requests(request: Request, call_next):

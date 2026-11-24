@@ -2,13 +2,14 @@
 (enforced in app/security.py, like every role rule)."""
 from typing import Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from app import auth
 from app.config import get_settings
 from app.db import store
 from app.db.models import User
+from app.security import require_admin
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -82,12 +83,12 @@ def logout(request: Request, response: Response):
     return {"ok": True}
 
 
-@router.get("/users")
+@router.get("/users", dependencies=[Depends(require_admin)])
 def users():
     return [auth.public(u) for u in store.find(User, sort=[("_id", 1)])]
 
 
-@router.post("/users")
+@router.post("/users", dependencies=[Depends(require_admin)])
 def add_user(body: UserIn):
     try:
         return auth.public(auth.create_user(body.email, body.password, body.role, body.name))
@@ -95,7 +96,7 @@ def add_user(body: UserIn):
         raise HTTPException(409, str(exc)) from exc
 
 
-@router.patch("/users/{user_id}")
+@router.patch("/users/{user_id}", dependencies=[Depends(require_admin)])
 def change_user(user_id: int, body: UserPatch):
     try:
         return auth.public(auth.update_user(user_id, **body.model_dump(exclude_none=True)))

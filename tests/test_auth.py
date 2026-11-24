@@ -146,3 +146,77 @@ def test_sign_in_off_keeps_the_old_single_user_behaviour(monkeypatch):
     c = TestClient(app, headers=WEB)
     assert c.get("/api/campaigns").status_code == 200
     assert c.get("/api/auth/state").json()["auth_required"] is False
+
+
+def test_editor_cannot_approve_with_an_odd_spelling_of_the_id():
+    """FastAPI reads "+5", " 5" and "5.0" as approval 5; the admin rule must catch every spelling."""
+    aid = _pending_approval()
+    editor = _client("ed@example.com")
+    for spelled in (f"+{aid}", f"%20{aid}", f"{aid}%20", f"{aid}.0", f"0{aid}"):
+        for verb in ("approve", "reject"):
+            r = editor.post(f"/api/approvals/{spelled}/{verb}")
+            assert r.status_code == 403, (spelled, verb, r.status_code)
+    assert store.get(Approval, aid).status == "pending"
+
+
+def test_route_level_admin_check_backs_up_the_middleware(monkeypatch):
+    """Even if the middleware pattern missed a path, the approve route itself refuses an editor."""
+    from app import security
+
+    aid = _pending_approval()
+    editor = _client("ed@example.com")
+    monkeypatch.setattr(security, "ADMIN_ONLY", [])
+    assert editor.post(f"/api/approvals/{aid}/approve").status_code == 403
+    assert editor.get("/api/auth/users").status_code == 403
+    assert store.get(Approval, aid).status == "pending"
+
+
+def test_wrong_tries_on_this_computer_do_not_lock_out_other_users():
+    auth.create_user("a@example.com", PW)
+    auth.create_user("b@example.com", PW)
+    for _ in range(5):
+        with pytest.raises(auth.AuthError):
+            auth.login("a@example.com", "wrong password!", ip="127.0.0.1")
+    with pytest.raises(auth.AuthError, match="locked"):
+        auth.login("a@example.com", PW, ip="127.0.0.1")
+    assert auth.login("b@example.com", PW, ip="127.0.0.1")[1].email == "b@example.com"
+
+
+def test_remote_address_still_locks_after_five_wrong_tries():
+    auth.create_user("a@example.com", PW)
+    auth.create_user("b@example.com", PW)
+    for i in range(5):
+        with pytest.raises(auth.AuthError):
+            auth.login(f"x{i}@example.com", "wrong password!", ip="203.0.113.9")
+    with pytest.raises(auth.AuthError, match="locked"):
+        auth.login("b@example.com", PW, ip="203.0.113.9")
+
+
+def test_chat_sessions_are_kept_per_user(monkeypatch):
+    from app.api import chat as chat_api
+
+    seen = []
+
+    async def fake_turn(session_id, text):
+        seen.append(session_id)
+        yield {"type": "message", "text": "ok"}
+
+    monkeypatch.setattr(chat_api, "chat_turn", fake_turn)
+    a, b = _client("ed@example.com"), _client("boss@example.com", "admin")
+    for c in (a, b):
+        assert c.post("/api/chat", json={"session_id": "same-id", "message": "hi"}).status_code == 200
+    assert len(seen) == 2 and seen[0] != seen[1] and all(s.endswith(":same-id") for s in seen)
+
+
+def test_approval_filed_from_chat_records_who_asked():
+    from app.actor import set_actor
+    from app.agent.runner import _stamp_requester
+
+    aid = _pending_approval()  # made the way the MCP process makes it: no signed-in user there
+    assert store.get(Approval, aid).requested_by == ""
+    set_actor("ed@example.com")
+    try:
+        _stamp_requester(store.get(Approval, aid))
+    finally:
+        set_actor("")
+    assert store.get(Approval, aid).requested_by == "ed@example.com"

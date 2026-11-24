@@ -464,7 +464,10 @@ The same **Posts** page also posts to LinkedIn, publicly, either **as your own p
   Every call sends `LinkedIn-Version: LINKEDIN_API_VERSION` (YYYYMM; each version is supported for at least a year).
 - **Chat:** "Write a LinkedIn post about our new plant-care workshop" → `create_linkedin_post` →
   `request_post_publish`.
-- **Not yet:** results (likes, impressions) and comments for LinkedIn posts; video and document posts.
+- **Results:** the post's Results panel reads reactions and comments (Social Metadata API) and, for posts on your
+  own profile, impressions, members reached and reposts (Member Post Analytics, permission `r_member_postAnalytics`).
+  When LinkedIn refuses a number, the panel says why instead of showing 0.
+- **Not yet:** answering LinkedIn comments from Milo; video and document posts.
 - **Setup, as your own profile (no LinkedIn review, works today):**
   1. linkedin.com/developers → Create app (it asks for a LinkedIn Page to link; any Page you admin works).
   2. Products tab → add **Share on LinkedIn** and **Sign In with LinkedIn using OpenID Connect**.
@@ -597,8 +600,11 @@ With `AUTH_REQUIRED=true` (the default) Milo asks everyone to sign in.
   Milo runs on, and only while no user exists.
 - **Roles:** an **editor** can chat with Milo, edit drafts, reply to DMs and comments, manage the FAQ and PDFs,
   and *request* a change. Only an **admin** can approve or reject, and add or change users. The server checks
-  the role on every request (`app/security.py`); the UI hiding a button is only cosmetic.
-- **Who did it:** approvals show "Requested by" and "Approved / Rejected by", and Activity rows carry `by`.
+  the role on every request (`app/security.py`) and again inside the approve, reject and user routes; the UI
+  hiding a button is only cosmetic.
+- **Who did it:** approvals show "Requested by" and "Approved / Rejected by" (also for requests Milo files from
+  chat: they carry the person who was chatting), and Activity rows carry `by`.
+- **Chats are per person:** each signed-in user's chat sessions are kept apart from everyone else's.
 - **Users page** (admins only, sidebar → Users): the top shows how sign-off works (editor prepares → admin
   decides → Milo publishes) with the people in each role. Below, an **Admins** and an **Editors** panel list what
   each role can and can't do, and the people in it. **Make admin / Make editor** changes a role, **More** sets a new
@@ -609,6 +615,7 @@ With `AUTH_REQUIRED=true` (the default) Milo asks everyone to sign in.
   `--reset-password` sets a new password, `--disable` / `--enable` blocks or allows sign-in, `--list` shows everyone.
   Any change signs that person out; Milo always keeps at least one active admin.
 - **How it is stored:** passwords as salted scrypt hashes; a session is a random id in an `HttpOnly`,
-  `SameSite=Strict` cookie, and only its SHA-256 is saved. Five wrong tries lock sign-in for 15 minutes.
-- **Limits of this version:** two roles, and requests made by the chat agent are recorded
-  as "agent", not with the name of the person chatting. Set `AUTH_REQUIRED=false` for the old single-user mode.
+  `SameSite=Strict` cookie, and only its SHA-256 is saved. Five wrong tries for one email lock that email for 15 minutes (also five from one
+  remote address; not from this computer, where everyone shares 127.0.0.1, so one person's typos can't lock out the rest).
+- **Limits of this version:** two roles; the optimizer's suggestions have no person as requester (source
+  "optimizer"). Set `AUTH_REQUIRED=false` for the old single-user mode.

@@ -1,9 +1,10 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app import actions
 from app.actor import current_actor
 from app.db import store
 from app.db.models import Approval, Campaign, SocialPost, now
+from app.security import require_admin
 from app.util.redact import redact
 
 router = APIRouter(prefix="/api/approvals", tags=["approvals"])
@@ -35,7 +36,7 @@ def _claim(approval_id: int, new_status: str) -> Approval:
     return a
 
 
-@router.post("/{approval_id}/approve")
+@router.post("/{approval_id}/approve", dependencies=[Depends(require_admin)])
 async def approve(approval_id: int):
     a = _claim(approval_id, "executing")
     try:
@@ -56,7 +57,7 @@ async def approve(approval_id: int):
     return {"approval": a, "campaign": campaign}
 
 
-@router.post("/{approval_id}/reject")
+@router.post("/{approval_id}/reject", dependencies=[Depends(require_admin)])
 def reject(approval_id: int):
     a = _claim(approval_id, "rejected")
     a.decided_at = now()
