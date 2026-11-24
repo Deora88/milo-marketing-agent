@@ -831,10 +831,11 @@
   async function decide(id, kind, btn) {
     if (kind === "approve") {
       const isPost = btn.dataset.action === "publish_post";
-      const where = /LinkedIn Page/.test(btn.dataset.summary || "") ? "LinkedIn" : "Instagram";
+      const where = /LinkedIn (Page|profile)/.test(btn.dataset.summary || "") ? "LinkedIn" : "Instagram";
+      const liWhere = /LinkedIn profile/.test(btn.dataset.summary || "") ? "publicly on your own LinkedIn profile" : "publicly on your LinkedIn Page";
       confirmDialog({
         title: isPost ? `Publish to ${where}?` : `${btn.dataset.verb} on Meta?`,
-        body: isPost ? `${btn.dataset.summary} Milo posts it ${where === "LinkedIn" ? "publicly on your LinkedIn Page" : "to your Instagram account"} now, or keeps it until the scheduled time.`
+        body: isPost ? `${btn.dataset.summary} Milo posts it ${where === "LinkedIn" ? liWhere : "to your Instagram account"} now, or keeps it until the scheduled time.`
           : `${btn.dataset.summary}. Milo will make this change on your Meta ad account right away.`,
         ok: `Yes, ${btn.dataset.verb.toLowerCase()}`,
         onOk: async () => {
@@ -2270,7 +2271,7 @@
         "DM webhook (Inbox)": NAV_ICONS.inbox,
         "Bot answers": '<rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 4v4M9 13h.01M15 13h.01M9.5 16h5"/>',
         "Instagram posts": NAV_ICONS.posts,
-        "LinkedIn Page posts": '<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 10v7M8 7v.01M12 17v-4a2 2 0 0 1 4 0v4M12 10v7"/>',
+        "LinkedIn posts": '<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 10v7M8 7v.01M12 17v-4a2 2 0 0 1 4 0v4M12 10v7"/>',
         "Instagram DMs check": NAV_ICONS.comments,
         "Web research (Tavily)": '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.5-4.5"/>',
         "Optimizer": NAV_ICONS.optimizer,
@@ -2290,7 +2291,7 @@
         "DM webhook (Inbox)": s.dm?.webhook_configured ? "Connected" : "Not set",
         "Bot answers": s.dm?.autoreply ? "Auto-send" : "Drafts only",
         "Instagram posts": s.posts?.ready ? "Ready" : "Needs setup",
-        "LinkedIn Page posts": !s.linkedin ? "Not set" : s.linkedin.dry_run ? "Dry run" : !s.linkedin.configured ? "Not set" : s.linkedin.token_days_left != null && s.linkedin.token_days_left <= 7 ? (s.linkedin.token_days_left > 0 ? `Needs new token (${s.linkedin.token_days_left} d)` : "Needs new token") : "Live",
+        "LinkedIn posts": !s.linkedin ? "Not set" : s.linkedin.dry_run ? "Dry run" : !s.linkedin.configured ? "Not set" : s.linkedin.token_days_left != null && s.linkedin.token_days_left <= 7 ? (s.linkedin.token_days_left > 0 ? `Needs new token (${s.linkedin.token_days_left} d)` : "Needs new token") : "Live",
         "Web research (Tavily)": !s.research?.enabled ? "Off" : s.research.key_set ? "On" : "Not set",
       };
       const svg = (d, size = 18) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="shrink-0">${d}</svg>`;
@@ -2320,7 +2321,7 @@
           ${s.dm ? check(s.dm.webhook_configured, "DM webhook (Inbox)", s.dm.webhook_configured ? `Receiving Messenger / Instagram DMs at /webhooks/meta. ${s.dm.unread} unread. Replies use ${s.dm.page_token_set ? "META_PAGE_ACCESS_TOKEN" : "a Page token fetched with META_ACCESS_TOKEN"}${s.dm.human_agent_enabled ? "; HUMAN_AGENT replies on" : ""}.` : "Add META_APP_SECRET and META_WEBHOOK_VERIFY_TOKEN to .env and connect the webhook in the Meta app (README: DM webhook).") : ""}
           ${s.dm ? check(true, "Bot answers", `PDF search: ${s.dm.embeddings ? "keywords + meaning (Cloudflare bge-m3)" : "keywords (BM25); set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN for meaning-based search"}. DMs: ${s.dm.autoreply ? "auto-send ON" : "drafts only"}${s.dm.autoreply ? (s.dm.pdf_autoreply ? ", exact PDF sentences sent too" : ", PDF answers stay drafts (DM_PDF_AUTOREPLY=false)") : ""}. Comments: ${s.dm.comment_autoreply ? "auto-answer ON (FAQ and exact PDF sentences only; phone numbers hidden)" : "drafts only (COMMENT_AUTOREPLY=false)"}.`) : ""}
           ${s.posts ? check(s.posts.ready, "Instagram posts", s.meta_dry_run ? "Dry run: approved posts are logged, not sent to Instagram." : s.posts.public_base_url_set ? "PUBLIC_BASE_URL is set: Instagram can download post images and Reels from Milo." : "Set PUBLIC_BASE_URL in .env to your ngrok https address: Instagram downloads post images and Reels from there.") : ""}
-          ${s.linkedin ? check(s.linkedin.ready, "LinkedIn Page posts", s.linkedin.dry_run ? "Dry run (LINKEDIN_DRY_RUN=true): approved LinkedIn posts are logged, not sent." : s.linkedin.configured ? `Posting to the Page as LINKEDIN_ORGANIZATION_ID · LinkedIn API ${esc(s.linkedin.api_version)}. Tokens last 60 days${s.linkedin.token_days_left != null ? `; this one has ${s.linkedin.token_days_left} day(s) left` : " (set LINKEDIN_TOKEN_EXPIRES_AT to get a warning)"}.` : "Add LINKEDIN_ACCESS_TOKEN and LINKEDIN_ORGANIZATION_ID to .env (README: LinkedIn Page posts).") : ""}
+          ${s.linkedin ? check(s.linkedin.ready, "LinkedIn posts", s.linkedin.dry_run ? "Dry run (LINKEDIN_DRY_RUN=true): approved LinkedIn posts are logged, not sent." : s.linkedin.configured ? `${s.linkedin.author === "me" ? "Posting to your own profile (LINKEDIN_AUTHOR=me)" : "Posting to the Page as LINKEDIN_ORGANIZATION_ID"} · LinkedIn API ${esc(s.linkedin.api_version)}. Tokens last 60 days${s.linkedin.token_days_left != null ? `; this one has ${s.linkedin.token_days_left} day(s) left` : " (set LINKEDIN_TOKEN_EXPIRES_AT to get a warning)"}.` : "Run scripts/linkedin_token.py and put the lines it prints into .env (README: LinkedIn posts).") : ""}
           ${row("Instagram DMs check", "Run a check", `Checks what Instagram DMs need on Meta's side. Read-only: changes nothing.<div class="mt-2"><button type="button" data-ig-check class="rounded-lg border border-line px-3 py-1.5 text-xs text-ink hover:bg-accent-soft">Check Instagram DM setup</button></div><div id="igCheck" aria-live="polite"></div>`)}
         `),
         group("Research", "Extra context Milo reads before writing.", `
@@ -2353,16 +2354,18 @@
   const RESULT_LABELS = [["like_count", "Likes"], ["comments_count", "Comments"], ["views", "Views"], ["reach", "Reach"],
     ["saved", "Saves"], ["shares", "Shares"], ["replies", "Replies"], ["total_interactions", "Interactions"],
     ["follows", "New followers"], ["profile_visits", "Profile visits"], ["ig_reels_avg_watch_time", "Watch time"]];
+  const LI_RESULT_LABELS = [["impressions", "Impressions"], ["members_reached", "Members reached"], ["reactions", "Reactions"],
+    ["comments", "Comments"], ["reshares", "Reposts"]];
   function resultsPanel(p) {
-    if (p.status !== "published" || p.platform === "linkedin") return "";
-    const r = p.insights || {};
+    if (p.status !== "published") return "";
+    const r = p.insights || {}, li = p.platform === "linkedin", where = li ? "LinkedIn" : "Instagram";
     const fmt = (k, v) => k === "ig_reels_avg_watch_time" ? `${(v / 1000).toFixed(1)} s` : Number(v).toLocaleString();
-    const tiles = RESULT_LABELS.filter(([k]) => k in r).map(([k, l]) => `<div class="rounded-lg bg-bg px-3 py-2"><div class="text-[11px] text-muted">${l}</div><div class="text-lg font-semibold tabular-nums">${fmt(k, r[k])}</div></div>`).join("");
+    const tiles = (li ? LI_RESULT_LABELS : RESULT_LABELS).filter(([k]) => k in r).map(([k, l]) => `<div class="rounded-lg bg-bg px-3 py-2"><div class="text-[11px] text-muted">${l}</div><div class="text-lg font-semibold tabular-nums">${fmt(k, r[k])}</div></div>`).join("");
     const live = p.meta_mode === "live";
     return `<div class="mb-3 rounded-lg border border-line p-3">
-      <div class="mb-2 flex flex-wrap items-center justify-between gap-2"><div class="text-sm font-medium">Results on Instagram</div>
+      <div class="mb-2 flex flex-wrap items-center justify-between gap-2"><div class="text-sm font-medium">Results on ${where}</div>
         ${live ? `<button type="button" data-post-insights class="rounded-lg border border-line px-3 py-1 text-xs hover:bg-accent-soft">Refresh</button>` : ""}</div>
-      ${tiles ? `<div class="grid grid-cols-2 gap-2 sm:grid-cols-4">${tiles}</div>` : `<p class="text-sm text-muted">${live ? "No numbers yet. Click Refresh, or wait: Milo checks automatically (Stories every 15 minutes while live, posts hourly for a week)." : "Dry run: this post isn't on Instagram, so there are no results."}</p>`}
+      ${tiles ? `<div class="grid grid-cols-2 gap-2 sm:grid-cols-4">${tiles}</div>` : p.insights_blocked ? `<p class="text-sm text-muted">${where} doesn't share numbers with this app yet.${p.permalink ? ` <a class="text-accent underline" href="${safeUrl(p.permalink)}" target="_blank" rel="noopener">See them on ${where}</a>.` : ""} Milo checks again once a day, and you can click Refresh any time.</p>` : `<p class="text-sm text-muted">${live ? `No numbers yet. Click Refresh, or wait: Milo checks automatically (${li ? "" : "Stories every 15 minutes while live, "}posts hourly for a week).` : `Dry run: this post isn't on ${where}, so there are no results.`}</p>`}
       ${p.insights_note ? `<p class="mt-2 text-xs text-muted">${esc(p.insights_note)}</p>` : ""}
       ${p.insights_at ? `<p class="mt-1 text-[11px] text-muted">Updated ${ago(p.insights_at)}</p>` : ""}
     </div>`;
@@ -2392,7 +2395,7 @@
     const text = p.caption || "";
     const short = text.length > 200 ? esc(text.slice(0, 200)) + '<span class="text-muted">…see more</span>' : esc(text);
     return `<div class="ig-phone"><div class="flex items-center gap-2 px-3 pt-3"><span style="display:grid;place-items:center;width:36px;height:36px;border-radius:6px;background:#0A66C2;color:#fff;font-size:13px;font-weight:700">in</span>
-        <span class="leading-tight"><b class="block text-[13px]">Your Page</b><span class="text-[11px] text-muted">Followers · now · 🌐</span></span></div>
+        <span class="leading-tight"><b class="block text-[13px]">${p.linkedin_author === "me" ? "You" : "Your Page"}</b><span class="text-[11px] text-muted">${p.linkedin_author === "me" ? "Your headline" : "Followers"} · now · 🌐</span></span></div>
       <p class="px-3 py-2 text-[13px] leading-snug" style="white-space:pre-line">${short || '<span class="text-muted">Write the post text</span>'}</p>${grid}
       <div class="border-t border-line py-2 text-[11px] text-muted" style="display:flex;justify-content:space-around"><span>Like</span><span>Comment</span><span>Repost</span><span>Send</span></div></div>
       <p class="mt-2 text-center text-xs text-muted">LinkedIn preview (approximate) · ${imgs.length > 1 ? `${imgs.length} images` : imgs.length ? "1 image" : "text only"}</p>`;
@@ -2463,7 +2466,7 @@
           <fieldset ${editable ? "" : "disabled"} class="space-y-4">
             <div><div class="mb-1 text-xs font-medium text-muted">Where</div>
               <div class="seg inline-flex flex-wrap gap-1 rounded-full border border-line bg-surface p-1">${Object.entries(POST_PLATFORM).map(([k, l]) => `<button type="button" data-post-platform="${k}" aria-pressed="${p.platform === k}" class="rounded-full px-3 py-1 text-sm">${l}</button>`).join("")}</div>
-              ${li ? '<p class="mt-1 text-[11px] text-muted">Posted publicly on your LinkedIn Page, as the Page.</p>' : ""}</div>
+              ${li ? `<p class="mt-1 text-[11px] text-muted">${p.linkedin_author === "me" ? "Posted publicly on your own LinkedIn profile, as you." : "Posted publicly on your LinkedIn Page, as the Page."}</p>` : ""}</div>
             <div><div class="mb-1 text-xs font-medium text-muted">Type</div>
               <div class="seg inline-flex flex-wrap gap-1 rounded-full border border-line bg-surface p-1">${Object.entries(kindsFor(p)).map(([k, l]) => `<button type="button" data-post-kind="${k}" aria-pressed="${p.kind === k}" class="rounded-full px-3 py-1 text-sm">${l}</button>`).join("")}</div></div>
             ${p.kind === "story" && !li ? '<p class="text-xs text-muted">Stories have no caption on Instagram. The image is shown full-screen (9:16) for 24 hours.</p>' : `

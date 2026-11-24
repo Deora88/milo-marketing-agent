@@ -263,14 +263,97 @@ def test_scheduler_publishes_linkedin_posts_at_their_time():
     assert posts.get(p.id).linkedin_post_urn.startswith("urn:li:share:dry_")
 
 
-def test_instagram_results_skip_linkedin_posts():
+class FakeResults:
+    """LinkedIn's results APIs: socialMetadata and memberCreatorPostAnalytics, each allowed or refused (403)."""
+
+    def __init__(self, metadata_ok=True, analytics_ok=True):
+        self.metadata_ok, self.analytics_ok, self.calls = metadata_ok, analytics_ok, []
+
+    def __call__(self, req: httpx.Request) -> httpx.Response:
+        self.calls.append(req)
+        if req.url.path.startswith("/rest/socialMetadata/"):
+            if not self.metadata_ok:
+                return httpx.Response(403, json={"message": "Not enough permissions", "status": 403})
+            return httpx.Response(200, json={"reactionSummaries": {"LIKE": {"count": 5}, "PRAISE": {"count": 2}},
+                                             "commentSummary": {"count": 3, "topLevelCount": 2}})
+        if req.url.path == "/rest/memberCreatorPostAnalytics":
+            if not self.analytics_ok:
+                return httpx.Response(403, json={"message": "Not enough permissions", "status": 403})
+            n = {"IMPRESSION": 140, "MEMBERS_REACHED": 96, "RESHARE": 1}[req.url.params["queryType"]]
+            return httpx.Response(200, json={"elements": [{"count": n, "metricType": {}}]})
+        return httpx.Response(404, json={"message": "unexpected"})
+
+    def client(self, **kw):
+        return LinkedInClient(_live(**{"linkedin_author": "me", "linkedin_person_id": "abc", **kw}),
+                              transport=httpx.MockTransport(self))
+
+
+def _published(urn="urn:li:share:7000000000000000001"):
+    p = _draft("text")
+    return store.update(SocialPost, p.id, {"status": "published", "meta_mode": "live", "linkedin_post_urn": urn,
+                                           "published_at": now()})
+
+
+def test_results_read_reactions_comments_and_impressions():
+    fake = FakeResults()
+    got = asyncio.run(linkedin.fetch_results(_published(), fake.client()))
+    assert got.insights == {"reactions": 7, "comments": 3, "impressions": 140, "members_reached": 96, "reshares": 1}
+    assert got.insights_note == "" and got.insights_at is not None
+    meta = next(r for r in fake.calls if r.url.path.startswith("/rest/socialMetadata/"))
+    assert meta.url.raw_path.endswith(b"/socialMetadata/urn%3Ali%3Ashare%3A7000000000000000001")
+    a = next(r for r in fake.calls if r.url.path == "/rest/memberCreatorPostAnalytics")
+    assert b"entity=(share:urn%3Ali%3Ashare%3A7000000000000000001)" in a.url.raw_path
+    assert a.url.params["q"] == "entity" and a.url.params["aggregation"] == "TOTAL"
+
+
+def test_results_without_permission_explain_and_keep_what_works():
+    fake = FakeResults(analytics_ok=False)
+    got = asyncio.run(linkedin.fetch_results(_published(), fake.client()))
+    assert got.insights == {"reactions": 7, "comments": 3} and got.insights_blocked is False  # partly allowed
+    assert "r_member_postAnalytics" in got.insights_note
+    assert len([r for r in fake.calls if r.url.path == "/rest/memberCreatorPostAnalytics"]) == 1  # stops at first 403
+    fake = FakeResults(metadata_ok=False, analytics_ok=False)
+    got = asyncio.run(linkedin.fetch_results(_published(), fake.client()))
+    assert got.insights == {} and "reactions and comments" in got.insights_note
+    assert got.insights_blocked is True
+
+
+def test_refused_results_are_checked_daily_not_hourly():
+    from datetime import timedelta as td
+
     from app.social import insights
 
-    p = _draft("text")
-    store.update(SocialPost, p.id, {"status": "published", "meta_mode": "live", "linkedin_post_urn": "urn:li:share:9",
-                                    "published_at": now()})
-    assert asyncio.run(insights.refresh_due()) == []
-    assert "LinkedIn" in asyncio.run(insights.fetch(p.id)).insights_note
+    fake = FakeResults(metadata_ok=False, analytics_ok=False)
+    got = asyncio.run(linkedin.fetch_results(_published(), fake.client()))
+    assert got.insights_blocked and not insights.due(got)  # just checked
+    later = store.update(SocialPost, got.id, {"insights_at": now() - td(hours=2)})
+    assert not insights.due(later)  # an hour or two later: still no
+    assert insights.due(store.update(SocialPost, got.id, {"insights_at": now() - td(hours=25)}))  # next day: yes
+    # once the app gets the permission, a refresh clears the flag and hourly checks come back
+    fixed = asyncio.run(linkedin.fetch_results(posts.get(got.id), FakeResults().client()))
+    assert not fixed.insights_blocked and fixed.insights["impressions"] == 140
+
+
+def test_results_for_ugc_posts_and_page_posts():
+    fake = FakeResults()
+    asyncio.run(linkedin.fetch_results(_published("urn:li:ugcPost:55"), fake.client()))
+    a = next(r for r in fake.calls if r.url.path == "/rest/memberCreatorPostAnalytics")
+    assert b"entity=(ugc:urn%3Ali%3AugcPost%3A55)" in a.url.raw_path
+    fake = FakeResults()
+    got = asyncio.run(linkedin.fetch_results(_published(), fake.client(linkedin_author="page")))
+    assert got.insights == {"reactions": 7, "comments": 3} and "Page posts" in got.insights_note
+    assert not [r for r in fake.calls if r.url.path == "/rest/memberCreatorPostAnalytics"]
+
+
+def test_results_in_dry_run_never_call_linkedin():
+    from app.social import insights
+
+    p = _published()
+    assert asyncio.run(insights.refresh_due()) == [p.id]  # LinkedIn posts are refreshed too
+    assert "LINKEDIN_DRY_RUN" in posts.get(p.id).insights_note and posts.get(p.id).insights == {}
+    d = _draft("text")
+    store.update(SocialPost, d.id, {"status": "published", "meta_mode": "dry_run", "published_at": now()})
+    assert "Dry run" in asyncio.run(insights.fetch(d.id)).insights_note
 
 
 # --- agent tool ---
@@ -289,3 +372,35 @@ def test_agent_drafts_linkedin_posts(monkeypatch):
     assert (p.platform, p.kind, len(p.images), p.source) == ("linkedin", "multi_image", 2, "agent")
     assert server.request_post_publish(p.id)["status"] == "pending_approval"
     assert "create_linkedin_post" in server.TOOL_NAMES
+
+
+# --- posting as your own profile (LINKEDIN_AUTHOR=me, self-serve w_member_social) ---
+
+def test_post_as_my_profile_uses_person_urn_for_post_and_images():
+    fake = FakeLinkedIn()
+    p = _approved(_draft("multi_image", n=2))
+    got = asyncio.run(linkedin.publish(p.id, fake.client(linkedin_author="me", linkedin_person_id="abc123XYZ",
+                                                         linkedin_organization_id="")))
+    assert got.status == "published" and got.meta_mode == "live"
+    init = [json.loads(r.content) for r in fake.calls if r.url.params.get("action") == "initializeUpload"]
+    assert init == [{"initializeUploadRequest": {"owner": "urn:li:person:abc123XYZ"}}] * 2
+    (body,) = fake.posts_bodies()
+    assert body["author"] == "urn:li:person:abc123XYZ" and len(body["content"]["multiImage"]["images"]) == 2
+
+
+def test_profile_mode_needs_person_id_not_page(monkeypatch):
+    monkeypatch.setenv("LINKEDIN_DRY_RUN", "false")
+    monkeypatch.setenv("LINKEDIN_AUTHOR", "me")
+    monkeypatch.setenv("LINKEDIN_ACCESS_TOKEN", "LI-TOKEN-123456")
+    get_settings.cache_clear()
+    p = _draft("text")
+    with pytest.raises(posts.PostError, match="LINKEDIN_PERSON_ID"):
+        posts.request_publish(p.id)
+    monkeypatch.setenv("LINKEDIN_PERSON_ID", "abc123XYZ")
+    get_settings.cache_clear()
+    r = posts.request_publish(p.id)
+    assert r["status"] == "pending_approval" and "your own LinkedIn profile" in r["summary"]
+    c = TestClient(app, headers=WEB)
+    st = c.get("/api/status").json()["linkedin"]
+    assert st["author"] == "me" and st["configured"] is True
+    assert c.get(f"/api/posts/{p.id}").json()["linkedin_author"] == "me"

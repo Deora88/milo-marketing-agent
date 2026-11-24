@@ -16,7 +16,7 @@ from pathlib import Path
 
 from app.db import store
 from app.db.models import SocialPost, now
-from app.linkedin.client import LinkedInClient, post_url
+from app.linkedin.client import LinkedInAPIError, LinkedInClient, post_url
 from app.util.redact import redact
 
 log = logging.getLogger("milo.posts")
@@ -29,6 +29,62 @@ _HASHTAG = re.compile(r"(?<![\w#\\])#(\w+)")
 
 class PublishError(RuntimeError):
     pass
+
+
+ANALYTICS = {"impressions": "IMPRESSION", "members_reached": "MEMBERS_REACHED", "reshares": "RESHARE"}
+NEEDS_CMA = "it needs LinkedIn's Community Management API on the app"
+
+
+async def fetch_results(p: SocialPost, client: LinkedInClient | None = None) -> SocialPost:
+    """Read a published LinkedIn post's numbers and store them in p.insights. Never raises for LinkedIn errors:
+    what LinkedIn refused is explained in insights_note.
+    - reactions, comments: Social Metadata API;
+    - impressions, members reached, reposts: Member Post Analytics API (posts on your own profile only;
+      permission r_member_postAnalytics)."""
+    if p.meta_mode != "live" or not p.linkedin_post_urn:
+        return store.update(SocialPost, p.id, {"insights_note": "Dry run: this post isn't on LinkedIn, so there "
+                                                                "are no results."})
+    own = client is None
+    client = client or LinkedInClient()
+    if client.dry_run:
+        if own:
+            await client.aclose()
+        return store.update(SocialPost, p.id, {"insights_at": now(),
+                                               "insights_note": "LINKEDIN_DRY_RUN is on, so Milo doesn't call "
+                                                                "LinkedIn for results."})
+    found, notes, refused, asked = dict(p.insights), [], 0, 0
+    try:
+        try:
+            asked += 1
+            found.update(await client.social_metadata(p.linkedin_post_urn))
+        except LinkedInAPIError as exc:
+            if exc.status == 403:
+                refused += 1
+                notes.append(f"LinkedIn doesn't let this app read reactions and comments yet ({NEEDS_CMA}).")
+            else:
+                notes.append(f"Reactions/comments: {redact(exc)[:120]}")
+        if client.posts_as_member:
+            asked += 1
+            for key, metric in ANALYTICS.items():
+                try:
+                    found[key] = await client.member_post_metric(p.linkedin_post_urn, metric)
+                except LinkedInAPIError as exc:
+                    if exc.status == 403:
+                        refused += 1
+                        notes.append("Impressions, reach and reposts need the r_member_postAnalytics permission "
+                                     f"({NEEDS_CMA}). They show on the post on LinkedIn.")
+                    else:
+                        notes.append(f"Impressions: {redact(exc)[:120]}")
+                    break  # same permission for all three: one note is enough
+        else:
+            notes.append("Milo doesn't read impressions for Page posts yet. They show on the post on LinkedIn.")
+    finally:
+        if own:
+            await client.aclose()
+    found = {k: v for k, v in found.items() if isinstance(v, (int, float))}
+    blocked = refused == asked  # LinkedIn said no to everything: the app lacks the permission, not a glitch
+    return store.update(SocialPost, p.id, {"insights": found, "insights_at": now(), "insights_note": " ".join(notes),
+                                           "insights_blocked": blocked})
 
 
 def escape_text(text: str) -> str:
@@ -79,7 +135,7 @@ async def publish(post_id: int, client: LinkedInClient | None = None, sleep=asyn
     client = client or LinkedInClient(sleep=sleep)
     mode = "dry_run" if client.dry_run else "live"
     try:
-        author = client.organization_urn
+        author = client.author_urn
         urns = []
         for path in p.images:
             urn = await client.upload_image(Path(path).read_bytes(), owner=author)

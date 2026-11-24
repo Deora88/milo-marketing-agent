@@ -447,9 +447,9 @@ the same approval gate as ads: nothing is posted until you click **Approve**.
 - **Story replies and mentions** arrive as DMs and show in the Inbox as "Replied to your story" or "Mentioned
   you in their story" (with a link while Meta's story link is valid).
 
-## LinkedIn Page posts (text, photo, multi-image)
-The same **Posts** page also posts to the business's **LinkedIn Page**, as the Page, publicly. Pick **LinkedIn**
-under *Where*. Same approval gate, statuses and scheduler as Instagram: nothing is posted until **Approve**.
+## LinkedIn posts (text, photo, multi-image)
+The same **Posts** page also posts to LinkedIn, publicly, either **as your own profile** (`LINKEDIN_AUTHOR=me`) or
+**as the company Page** (`LINKEDIN_AUTHOR=page`). Pick **LinkedIn** under *Where*. Same approval gate, statuses and scheduler as Instagram: nothing is posted until **Approve**.
 
 - **Types:** Text (no image), Photo (1 image), Multi-image (2–20 images; LinkedIn allows multi-image only for
   organic posts). Images are stored uncropped (max 1920 px); one optional image description (alt text).
@@ -465,12 +465,19 @@ under *Where*. Same approval gate, statuses and scheduler as Instagram: nothing 
 - **Chat:** "Write a LinkedIn post about our new plant-care workshop" → `create_linkedin_post` →
   `request_post_publish`.
 - **Not yet:** results (likes, impressions) and comments for LinkedIn posts; video and document posts.
-- **Setup:**
+- **Setup, as your own profile (no LinkedIn review, works today):**
+  1. linkedin.com/developers → Create app (it asks for a LinkedIn Page to link; any Page you admin works).
+  2. Products tab → add **Share on LinkedIn** and **Sign In with LinkedIn using OpenID Connect**.
+  3. Auth tab → add the redirect `http://localhost:8765/callback`; copy the Client ID and Primary Client Secret.
+  4. `uv run python scripts/linkedin_token.py --as me --client-id <id> --client-secret <secret>`, sign in, and
+     paste the printed `LINKEDIN_AUTHOR`, `LINKEDIN_PERSON_ID`, `LINKEDIN_ACCESS_TOKEN`, `LINKEDIN_TOKEN_EXPIRES_AT`
+     into `.env`. Set `LINKEDIN_DRY_RUN=false` and restart Milo.
+- **Setup, as the company Page:**
   1. A LinkedIn developer app linked to the company Page, verified by a Page super admin, with the
      **Community Management API** approved (it must be the only product on that app; registered companies only).
   2. In the app's Auth tab add the redirect `http://localhost:8765/callback`, then run
-     `uv run python scripts/linkedin_token.py --client-id <id> --client-secret <secret>` and sign in as a Page
-     admin. It prints `LINKEDIN_ACCESS_TOKEN`, `LINKEDIN_TOKEN_EXPIRES_AT` and `LINKEDIN_ORGANIZATION_ID`.
+     `uv run python scripts/linkedin_token.py --as page --client-id <id> --client-secret <secret>` and sign in as a
+     Page admin. It prints `LINKEDIN_AUTHOR=page`, the token, its expiry and `LINKEDIN_ORGANIZATION_ID`.
   3. Keep `LINKEDIN_DRY_RUN=true` to try the flow (approved posts are logged, not sent), then set it to `false`.
 - **Token:** lasts 60 days (refresh tokens are only for LinkedIn's approved partners). The status page warns 7 days
   before `LINKEDIN_TOKEN_EXPIRES_AT`; a 401 from LinkedIn means: run the script again.

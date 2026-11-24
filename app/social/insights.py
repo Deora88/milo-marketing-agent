@@ -1,4 +1,5 @@
-"""Results of published Instagram posts (read-only): likes, comments, saves, shares, views, reach...
+"""Results of published posts (read-only). LinkedIn posts: app/social/linkedin.fetch_results.
+Instagram: likes, comments, saves, shares, views, reach...
 
 Instagram Graph API, Facebook Login path, Page token:
 - like_count and comments_count are fields on the media (GET /{media-id}?fields=like_count,comments_count) and
@@ -41,8 +42,9 @@ async def fetch(post_id: int, client: MetaClient | None = None) -> SocialPost:
     if p is None or p.status != "published":
         raise ValueError("Results exist only for published posts.")
     if p.platform == "linkedin":
-        return store.update(SocialPost, p.id, {"insights_note": "Milo doesn't read LinkedIn post results yet. "
-                                                                "See them on the post (link above)."})
+        from app.social import linkedin
+
+        return await linkedin.fetch_results(p)
     if p.meta_mode != "live" or not p.meta_media_id:
         return store.update(SocialPost, p.id, {"insights_note": "Dry run: this post isn't on Instagram, so there "
                                                                 "are no results."})
@@ -99,12 +101,14 @@ def due(p: SocialPost) -> bool:
     since = now() - p.insights_at if p.insights_at else timedelta(days=999)
     if p.kind == "story":
         return age <= timedelta(hours=STORY_HOURS) and since >= timedelta(minutes=15)
+    if p.insights_blocked:  # no permission: asking hourly only repeats the refusal, so check once a day
+        return age <= timedelta(days=FEED_DAYS) and since >= timedelta(days=1)
     return age <= timedelta(days=FEED_DAYS) and since >= timedelta(hours=1)
 
 
 async def refresh_due() -> list[int]:
     done = []
-    for p in store.find(SocialPost, {"status": "published", "meta_mode": "live", "platform": {"$ne": "linkedin"}}):
+    for p in store.find(SocialPost, {"status": "published", "meta_mode": "live"}):  # Instagram and LinkedIn
         if due(p):
             try:
                 await fetch(p.id)

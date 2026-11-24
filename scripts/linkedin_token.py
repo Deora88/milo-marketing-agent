@@ -1,12 +1,17 @@
-"""Get a LinkedIn access token for Milo's Page posts (3-legged OAuth, run once every ~60 days).
+"""Get a LinkedIn access token for Milo's LinkedIn posts (3-legged OAuth, run once every ~60 days).
 
-    uv run python scripts/linkedin_token.py --client-id <id> --client-secret <secret>
+    Post as yourself (your own profile; self-serve, no LinkedIn review):
+        uv run python scripts/linkedin_token.py --as me --client-id <id> --client-secret <secret>
+      Your app needs the products "Share on LinkedIn" and "Sign In with LinkedIn using OpenID Connect".
 
-Before running it, in the LinkedIn Developer Portal (your app with the Community Management API approved):
-  Auth tab -> Authorized redirect URLs -> add  http://localhost:8765/callback
-The member who signs in must be an admin of the company Page. The script opens the sign-in page, catches the
-redirect on this computer, swaps the code for a token, and lists the Pages that member administers. Then put the
-printed lines into .env. The token is shown once and never saved by this script.
+    Post as the company Page (needs the Community Management API approved, and a Page admin signing in):
+        uv run python scripts/linkedin_token.py --as page --client-id <id> --client-secret <secret>
+
+Before running it, in the LinkedIn Developer Portal: Auth tab -> Authorized redirect URLs -> add
+  http://localhost:8765/callback
+The script opens the sign-in page, catches the redirect on this computer, swaps the code for a token, and finds
+your member id (--as me) or the Pages you administer (--as page). Then put the printed lines into .env.
+The token is shown once and never saved by this script.
 
 (The portal's own "OAuth Token Tools" page can make a token too; this script also finds the Page id for you.)
 """
@@ -22,7 +27,8 @@ from urllib.parse import parse_qs, urlencode, urlparse
 import httpx
 
 REDIRECT = "http://localhost:8765/callback"
-SCOPES = "w_organization_social r_organization_social rw_organization_admin"
+SCOPES = {"me": "openid profile w_member_social",
+          "page": "w_organization_social r_organization_social rw_organization_admin"}
 VERSION = "202610"
 
 
@@ -62,12 +68,14 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--client-id", required=True)
     ap.add_argument("--client-secret", required=True)
+    ap.add_argument("--as", dest="author", choices=["me", "page"], default="me",
+                    help="me = post as your own profile (default); page = post as the company Page")
     args = ap.parse_args()
 
     state = secrets.token_urlsafe(16)
     url = "https://www.linkedin.com/oauth/v2/authorization?" + urlencode(
         {"response_type": "code", "client_id": args.client_id, "redirect_uri": REDIRECT, "state": state,
-         "scope": SCOPES})
+         "scope": SCOPES[args.author]})
     print("Opening LinkedIn sign-in. If no browser opens, visit:\n" + url)
     webbrowser.open(url)
     code = _catch_code(state)
@@ -81,6 +89,21 @@ def main() -> None:
     token = body["access_token"]
     expires = date.today() + timedelta(seconds=int(body.get("expires_in", 60 * 86400)))
 
+    if args.author == "me":
+        me = httpx.get("https://api.linkedin.com/v2/userinfo", timeout=30,
+                       headers={"Authorization": f"Bearer {token}"})
+        if me.status_code >= 400:
+            sys.exit(f"Couldn't read your profile ({me.status_code}): {me.text[:200]}. Is 'Sign In with LinkedIn "
+                     "using OpenID Connect' added to the app?")
+        info = me.json()
+        print(f"\nSigned in as {info.get('name', '?')}. Add these lines to .env "
+              "(and set LINKEDIN_DRY_RUN=false when you are ready to post for real):\n")
+        print("LINKEDIN_AUTHOR=me")
+        print(f"LINKEDIN_PERSON_ID={info['sub']}")
+        print(f"LINKEDIN_ACCESS_TOKEN={token}")
+        print(f"LINKEDIN_TOKEN_EXPIRES_AT={expires.isoformat()}")
+        return
+
     pages = httpx.get("https://api.linkedin.com/rest/organizationAcls", timeout=30,
                       params={"q": "roleAssignee", "role": "ADMINISTRATOR", "state": "APPROVED"},
                       headers={"Authorization": f"Bearer {token}", "LinkedIn-Version": VERSION,
@@ -89,6 +112,7 @@ def main() -> None:
     if pages.status_code < 400:
         orgs = [e.get("organization", "") for e in pages.json().get("elements", [])]
     print("\nAdd these lines to .env (and set LINKEDIN_DRY_RUN=false when you are ready to post for real):\n")
+    print("LINKEDIN_AUTHOR=page")
     print(f"LINKEDIN_ACCESS_TOKEN={token}")
     print(f"LINKEDIN_TOKEN_EXPIRES_AT={expires.isoformat()}")
     if len(orgs) == 1:

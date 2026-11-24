@@ -8,6 +8,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from app.config import get_settings
 from app.db import store
 from app.db.models import Approval, SocialPost
 from app.social import posts
@@ -22,7 +23,8 @@ def _out(p: SocialPost) -> dict:
     d = p.model_dump(exclude={"images", "video_path", "media_token"})
     d.update(image_count=len(p.images), has_video=bool(p.video_path),
              approval_id=pending[0].id if pending else None, kind_label=posts.kind_label(p),
-             max_images=posts.max_images(p.platform, p.kind))
+             max_images=posts.max_images(p.platform, p.kind),
+             linkedin_author="me" if get_settings().linkedin_author.strip().lower() == "me" else "page")
     return d
 
 

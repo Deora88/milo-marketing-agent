@@ -198,6 +198,7 @@ class SocialPost(Doc):
     insights: dict = Field(default_factory=dict)
     insights_at: Optional[datetime] = None
     insights_note: str = ""  # why some numbers are missing (no permission yet, under 5 people, story expired)
+    insights_blocked: bool = False  # the platform refused every number (no permission): checked daily, not hourly
 
 
 class Comment(Doc):

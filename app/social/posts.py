@@ -260,7 +260,9 @@ def describe(p: SocialPost) -> str:
         when = (f"at {p.scheduled_at.astimezone(timezone.utc):%Y-%m-%d %H:%M} UTC" if p.scheduled_at
                 else "right after approval")
         text = f' Text: "{p.caption[:180]}{"…" if len(p.caption) > 180 else ""}"' if p.caption else ""
-        return f"Post {what} to your LinkedIn Page (public) {when}.{text}"
+        where = ("your own LinkedIn profile" if get_settings().linkedin_author.strip().lower() == "me"
+                 else "your LinkedIn Page")
+        return f"Post {what} to {where} (public) {when}.{text}"
     what = {"photo": "a photo", "carousel": f"a carousel of {n} images",
             "reel": f"a Reel ({n} image(s), {max(3, n * media.SECONDS_PER_IMAGE)} s video)",
             "story": "a Story (disappears after 24 hours)"}[p.kind]
@@ -295,9 +297,12 @@ def request_publish(post_id: int, source: str = "user") -> dict:
     if p.scheduled_at and p.scheduled_at < now() + timedelta(minutes=2):
         raise PostError("The schedule time has passed. Pick a new time or clear it.")
     if p.platform == "linkedin":
-        if not s.linkedin_dry_run and not (s.linkedin_access_token and s.linkedin_organization_id):
-            raise PostError("Set LINKEDIN_ACCESS_TOKEN and LINKEDIN_ORGANIZATION_ID in .env (or keep "
-                            "LINKEDIN_DRY_RUN=true to try it without posting).")
+        as_me = s.linkedin_author.strip().lower() == "me"
+        who, who_id = (("LINKEDIN_PERSON_ID", s.linkedin_person_id) if as_me
+                       else ("LINKEDIN_ORGANIZATION_ID", s.linkedin_organization_id))
+        if not s.linkedin_dry_run and not (s.linkedin_access_token and who_id):
+            raise PostError(f"Set LINKEDIN_ACCESS_TOKEN and {who} in .env (scripts/linkedin_token.py prints both), "
+                            "or keep LINKEDIN_DRY_RUN=true to try it without posting.")
     elif not s.meta_dry_run and not s.public_base_url.startswith("https://"):
         raise PostError("Set PUBLIC_BASE_URL in .env to your public https address (your ngrok domain): Meta "
                         "downloads the post's images and video from there.")

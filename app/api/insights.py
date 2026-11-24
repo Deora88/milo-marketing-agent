@@ -64,8 +64,10 @@ def _linkedin_status(s) -> dict:
             days_left = (date.fromisoformat(s.linkedin_token_expires_at[:10]) - date.today()).days
     except ValueError:
         days_left = None
-    configured = bool(s.linkedin_access_token and s.linkedin_organization_id)
+    as_me = s.linkedin_author.strip().lower() == "me"
+    configured = bool(s.linkedin_access_token and (s.linkedin_person_id if as_me else s.linkedin_organization_id))
     return {"dry_run": s.linkedin_dry_run, "configured": configured, "api_version": s.linkedin_api_version,
+            "author": "me" if as_me else "page",
             "token_days_left": days_left,
             "ready": s.linkedin_dry_run or (configured and (days_left is None or days_left > 0))}
 

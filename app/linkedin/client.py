@@ -4,8 +4,10 @@
 - Retries 429 and 5xx with exponential backoff (honours Retry-After).
 - LINKEDIN_DRY_RUN=true (default) returns fake URNs and never touches LinkedIn.
 
-Needs a 3-legged member access token with w_organization_social (r_organization_social to read posts back),
-from a member who is an ADMINISTRATOR / CONTENT_ADMINISTRATOR of the Page. Tokens last 60 days.
+Two ways to post (LINKEDIN_AUTHOR):
+- page: as the company Page. Token with w_organization_social (Community Management API, reviewed) from a Page admin.
+- me:   as the signed-in member's own profile. Token with w_member_social (self-serve "Share on LinkedIn" product).
+Tokens last 60 days.
 """
 import asyncio
 import logging
@@ -38,8 +40,8 @@ def _error(resp: httpx.Response) -> LinkedInAPIError:
     if resp.status_code == 401:
         msg += " (the LinkedIn token is missing, wrong or expired: tokens last 60 days; make a new one)"
     elif resp.status_code == 403:
-        msg += (" (the token's member must be an admin of the Page, and the app needs the Community Management "
-                "API with w_organization_social)")
+        msg += (" (posting as the Page: the token's member must be a Page admin and the app needs the Community "
+                "Management API; posting as yourself: the app needs 'Share on LinkedIn' and the token w_member_social)")
     return LinkedInAPIError(resp.status_code, code, msg)
 
 
@@ -53,6 +55,18 @@ class LinkedInClient:
     @property
     def dry_run(self) -> bool:
         return self.s.linkedin_dry_run
+
+    @property
+    def posts_as_member(self) -> bool:
+        return self.s.linkedin_author.strip().lower() == "me"
+
+    @property
+    def author_urn(self) -> str:
+        """Who the post is from: urn:li:person:<id> (LINKEDIN_AUTHOR=me) or urn:li:organization:<id> (page)."""
+        if self.posts_as_member:
+            raw = self.s.linkedin_person_id.strip()
+            return raw if raw.startswith("urn:li:person:") else f"urn:li:person:{raw}"
+        return self.organization_urn
 
     @property
     def organization_urn(self) -> str:
@@ -88,7 +102,7 @@ class LinkedInClient:
 
     async def upload_image(self, data: bytes, owner: str | None = None) -> str:
         """initializeUpload -> PUT the bytes to uploadUrl -> image URN (urn:li:image:...)."""
-        owner = owner or self.organization_urn
+        owner = owner or self.author_urn
         if self.dry_run:
             log.info("[dry-run] upload image (%d bytes) for %s", len(data), owner)
             return f"urn:li:image:dry_{uuid.uuid4().hex[:10]}"
@@ -147,6 +161,26 @@ class LinkedInClient:
     async def get_post(self, urn: str) -> dict[str, Any]:
         resp = await self.request("GET", f"/posts/{quote(urn, safe='')}")
         return resp.json() or {}
+
+    # --- results (read-only) ---
+
+    async def social_metadata(self, urn: str) -> dict[str, int]:
+        """Reactions and comments on a post: GET /rest/socialMetadata/{urn} (Social Metadata API)."""
+        resp = await self.request("GET", f"/socialMetadata/{quote(urn, safe='')}", retries=1)
+        body = resp.json() or {}
+        reactions = sum(int((r or {}).get("count") or 0) for r in (body.get("reactionSummaries") or {}).values())
+        comments = int(((body.get("commentSummary") or {}).get("count")) or 0)
+        return {"reactions": reactions, "comments": comments}
+
+    async def member_post_metric(self, urn: str, metric: str) -> int:
+        """One lifetime number for a post on the member's own profile (Member Post Analytics API, needs
+        r_member_postAnalytics): metric = IMPRESSION | MEMBERS_REACHED | RESHARE | REACTION | COMMENT."""
+        kind = "ugc" if ":ugcPost:" in urn else "share"
+        # Rest.li finder: the URN inside (share:...) is percent-encoded, the brackets and colon are not.
+        path = (f"/memberCreatorPostAnalytics?q=entity&entity=({kind}:{quote(urn, safe='')})"
+                f"&queryType={metric}&aggregation=TOTAL")
+        resp = await self.request("GET", path, retries=1)
+        return sum(int((e or {}).get("count") or 0) for e in (resp.json() or {}).get("elements") or [])
 
     async def aclose(self) -> None:
         await self._http.aclose()
