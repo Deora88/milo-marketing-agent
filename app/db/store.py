@@ -9,7 +9,10 @@ from pymongo import ASCENDING, MongoClient, ReturnDocument
 from pymongo.database import Database
 
 from app.config import get_settings
-from app.db.models import Approval, AuditLog, Campaign, Doc, MetricSnapshot
+from app.actor import current_actor
+from app.db.models import (Approval, AuditLog, Campaign, CampaignVersion, Comment, Competitor, CustomerProfile, Doc,
+                           HashtagSearch, InboundMessage, KnowledgeDoc, Lead, MetricSnapshot, Session, SocialPost,
+                           User)
 
 T = TypeVar("T", bound=Doc)
 
@@ -22,7 +25,12 @@ def db() -> Database:
 
         client: Any = mongomock.MongoClient(tz_aware=False)
     else:
-        client = MongoClient(s.mongodb_uri, serverSelectionTimeoutMS=5000, appname="milo")
+        kw: dict = {}
+        if s.mongodb_uri.startswith("mongodb+srv://") or "tls=true" in s.mongodb_uri.lower():
+            import certifi  # Atlas: use certifi's CA list (Windows' store can fail the TLS handshake)
+
+            kw["tlsCAFile"] = certifi.where()
+        client = MongoClient(s.mongodb_uri, serverSelectionTimeoutMS=5000, appname="milo", **kw)
     return client[s.mongodb_db]
 
 
@@ -33,6 +41,23 @@ def init_db() -> None:
     # No index on _id: MongoDB creates it automatically and rejects a custom {_id: -1} index
     # (mongomock does not). Newest-first sorts on _id use the built-in index.
     d[Campaign.collection].create_index([("status", ASCENDING)])
+    d[InboundMessage.collection].create_index([("mid", ASCENDING)], unique=True)  # webhook retries
+    d[InboundMessage.collection].create_index([("page_id", ASCENDING), ("sender_id", ASCENDING)])
+    d[CustomerProfile.collection].create_index([("platform", ASCENDING), ("customer_id", ASCENDING)], unique=True)
+    d[KnowledgeDoc.collection].create_index([("sha256", ASCENDING)])
+    d[Approval.collection].create_index([("post_id", ASCENDING), ("status", ASCENDING)])
+    d[SocialPost.collection].create_index([("media_token", ASCENDING)])  # public /media/ lookups
+    d[SocialPost.collection].create_index([("status", ASCENDING)])
+    d[Lead.collection].create_index([("customer_id", ASCENDING)])
+    d[Comment.collection].create_index([("comment_id", ASCENDING)], unique=True)  # webhook retries
+    d[Comment.collection].create_index([("status", ASCENDING)])
+    d[Competitor.collection].create_index([("username", ASCENDING)], unique=True)
+    d[HashtagSearch.collection].create_index([("tag", ASCENDING)], unique=True)
+    d[CampaignVersion.collection].create_index([("campaign_id", ASCENDING), ("version", ASCENDING)], unique=True)
+    d[AuditLog.collection].create_index([("event", ASCENDING), ("created_at", ASCENDING)])
+    d[User.collection].create_index([("email", ASCENDING)], unique=True)
+    d[Session.collection].create_index([("sid_hash", ASCENDING)], unique=True)
+    d[Session.collection].create_index([("expires_at", ASCENDING)], expireAfterSeconds=0)  # MongoDB deletes old ones
 
 
 def next_id(collection: str) -> int:
@@ -92,5 +117,13 @@ def claim(cls: type[T], id_: int, expect: dict, changes: dict) -> T | None:
     return _from_doc(cls, doc)
 
 
+def update(cls: type[T], id_: int, changes: dict) -> T | None:
+    """Set only these fields (no whole-document replace, so concurrent writers don't wipe each other)."""
+    return claim(cls, id_, {}, changes)
+
+
 def audit(event: str, **detail) -> None:
+    by = current_actor()  # the signed-in person, when the change comes from a browser request
+    if by and "by" not in detail:
+        detail["by"] = by
     insert(AuditLog(event=event, detail=detail))

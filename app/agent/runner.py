@@ -12,6 +12,7 @@ from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
+from app.actor import current_actor
 from app.agent.agent import build_agent
 from app.db import store
 from app.db.models import Approval
@@ -59,6 +60,15 @@ def _approval_ids(result) -> set[int]:
     return {int(x) for x in re.findall(r'approval_id\\?"?\s*[:=]\s*\\?"?(\d+)', text)}
 
 
+def _stamp_requester(a: Approval) -> None:
+    """The MCP tools run in their own process, which doesn't know who is signed in, so an approval Milo files from
+    chat would show no "requested by". Fill it in with the signed-in user who sent this chat message."""
+    who = current_actor()
+    if who and not a.requested_by:
+        if store.claim(Approval, a.id, {"requested_by": ""}, {"requested_by": who}):
+            a.requested_by = who
+
+
 async def chat_turn(session_id: str, text: str) -> AsyncIterator[dict]:
     await ensure_session(session_id)
     start_id, seen = _max_approval_id(), set()
@@ -82,6 +92,7 @@ async def chat_turn(session_id: str, text: str) -> AsyncIterator[dict]:
                 # Approvals are created inside the MCP server process; pick up the ones this turn created.
                 for a in _new_pending(start_id, seen, _approval_ids(part.function_response.response or {})):
                     seen.add(a.id)
+                    _stamp_requester(a)
                     yield {"type": "approval", "approval_id": a.id, "summary": a.summary, "action": a.action,
                            "source": a.source, "reason": a.reason}
             elif part.text:

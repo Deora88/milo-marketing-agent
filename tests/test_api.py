@@ -61,7 +61,7 @@ def test_optional_api_token(monkeypatch):
 
 def test_ui_served_at_root():
     r = client().get("/")
-    assert r.status_code == 200 and "Chat with Milo" in r.text
+    assert r.status_code == 200 and "What should we do today?" in r.text
 
 
 # ---------------------------------------------------------------- flow

@@ -1,0 +1,24 @@
+# Milo + (optional) a local MongoDB. Settings come from .env, exactly as without Docker.
+#   docker compose up --build                      Milo with the MONGODB_URI from .env (e.g. Atlas)
+#   docker compose --profile local-db up --build   also starts MongoDB; set MONGODB_URI=mongodb://mongo:27017
+services:
+  milo:
+    build: .
+    image: milo:latest
+    env_file: .env
+    ports:
+      - "127.0.0.1:8000:8000"   # dashboard on this computer only; Meta webhooks reach it through your tunnel
+    volumes:
+      - milo-data:/app/data      # uploaded / generated images survive restarts and rebuilds
+    restart: unless-stopped
+
+  mongo:
+    image: mongo:7
+    profiles: ["local-db"]
+    volumes:
+      - mongo-data:/data/db
+    restart: unless-stopped
+
+volumes:
+  milo-data:
+  mongo-data:

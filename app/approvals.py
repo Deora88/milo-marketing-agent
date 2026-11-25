@@ -3,6 +3,7 @@
 A request never changes a live ad. It stores a pending Approval; app/actions.py executes it only after a human
 clicks Approve in the dashboard (POST /api/approvals/{id}/approve).
 """
+from app.actor import current_actor
 from app.actions import describe, spend_blocked_reason, total_live_budget
 from app.config import get_settings
 from app.db import store
@@ -54,6 +55,7 @@ def create_approval(action: str, campaign_id: int, payload: dict | None = None, 
             if err:
                 return {"status": "error", "message": err}
             a.payload, a.summary, a.reason, a.source = payload, describe(action, c, payload), reason, source
+            a.requested_by = current_actor() or a.requested_by
             store.save(a)
             store.audit("approval_updated", approval_id=a.id, action=action, campaign_id=c.id, source=source)
             return {"status": "pending_approval", "approval_id": a.id, "summary": a.summary,
@@ -68,7 +70,11 @@ def create_approval(action: str, campaign_id: int, payload: dict | None = None, 
             return {"status": "error", "message": "New budget equals the current budget."}
         err = budget_cap_error(c, payload["daily_budget"], action)
     elif action == "publish_campaign":
-        err = budget_cap_error(c, c.daily_budget, action)
+        from app import campaign_state
+
+        missing = campaign_state.requirements(c)["missing"] if c.status == "draft" else []
+        err = (f"The draft is not complete. Still missing: {', '.join(missing)}." if missing
+               else budget_cap_error(c, c.daily_budget, action))
         if (not err and "instagram" in c.platforms and not c.image_path
                 and not get_settings().meta_page_post_id and not c.meta_creative_id):
             err = ("Instagram ads need an image. Upload one on the campaign page, "
@@ -81,7 +87,8 @@ def create_approval(action: str, campaign_id: int, payload: dict | None = None, 
         return {"status": "error", "message": err}
 
     approval = store.insert(Approval(action=action, campaign_id=c.id, payload=payload,
-                                     summary=describe(action, c, payload), reason=reason, source=source))
+                                     summary=describe(action, c, payload), reason=reason, source=source,
+                                     requested_by=current_actor()))
     if action == "publish_campaign" and c.status == "draft":
         c.status = "pending_approval"
         store.save(c)
