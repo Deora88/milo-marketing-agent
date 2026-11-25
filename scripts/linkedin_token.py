@@ -1,11 +1,14 @@
 """Get a LinkedIn access token for Milo's LinkedIn posts (3-legged OAuth, run once every ~60 days).
 
     Post as yourself (your own profile; self-serve, no LinkedIn review):
-        uv run python scripts/linkedin_token.py --as me --client-id <id> --client-secret <secret>
+        uv run python scripts/linkedin_token.py --as me --client-id <id>
       Your app needs the products "Share on LinkedIn" and "Sign In with LinkedIn using OpenID Connect".
 
     Post as the company Page (needs the Community Management API approved, and a Page admin signing in):
-        uv run python scripts/linkedin_token.py --as page --client-id <id> --client-secret <secret>
+        uv run python scripts/linkedin_token.py --as page --client-id <id>
+
+The client secret is read from LINKEDIN_CLIENT_SECRET, or asked for without showing it. --client-secret still
+works as an override, but it ends up in shell history and the process list, so avoid it.
 
 Before running it, in the LinkedIn Developer Portal: Auth tab -> Authorized redirect URLs -> add
   http://localhost:8765/callback
@@ -16,7 +19,9 @@ The token is shown once and never saved by this script.
 (The portal's own "OAuth Token Tools" page can make a token too; this script also finds the Page id for you.)
 """
 import argparse
+import getpass
 import http.server
+import os
 import secrets
 import sys
 import threading
@@ -67,10 +72,15 @@ def _catch_code(expected_state: str) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--client-id", required=True)
-    ap.add_argument("--client-secret", required=True)
+    ap.add_argument("--client-secret", default="",
+                    help="override only; prefer LINKEDIN_CLIENT_SECRET or the prompt (stays out of shell history)")
     ap.add_argument("--as", dest="author", choices=["me", "page"], default="me",
                     help="me = post as your own profile (default); page = post as the company Page")
     args = ap.parse_args()
+    secret = (args.client_secret or os.environ.get("LINKEDIN_CLIENT_SECRET", "")
+              or getpass.getpass("LinkedIn client secret (not shown): ")).strip()
+    if not secret:
+        sys.exit("No client secret: set LINKEDIN_CLIENT_SECRET or type it at the prompt.")
 
     state = secrets.token_urlsafe(16)
     url = "https://www.linkedin.com/oauth/v2/authorization?" + urlencode(
@@ -82,7 +92,7 @@ def main() -> None:
 
     tok = httpx.post("https://www.linkedin.com/oauth/v2/accessToken", timeout=30, data={
         "grant_type": "authorization_code", "code": code, "redirect_uri": REDIRECT,
-        "client_id": args.client_id, "client_secret": args.client_secret})
+        "client_id": args.client_id, "client_secret": secret})
     if tok.status_code >= 400:
         sys.exit(f"Token exchange failed ({tok.status_code}): {tok.text[:300]}")
     body = tok.json()

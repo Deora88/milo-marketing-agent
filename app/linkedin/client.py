@@ -30,6 +30,11 @@ class LinkedInAPIError(Exception):
         self.status, self.code, self.message = status, code, message
 
 
+class PostMayBeLiveError(LinkedInAPIError):
+    """Creating the post failed in a way where LinkedIn may still have published it (5xx, timeout, network error,
+    or a success with no post id). Never retry it automatically; a person must check LinkedIn first."""
+
+
 def _error(resp: httpx.Response) -> LinkedInAPIError:
     try:
         body = resp.json()
@@ -112,9 +117,11 @@ class LinkedInClient:
         upload_url, urn = value.get("uploadUrl"), value.get("image")
         if not upload_url or not urn:
             raise LinkedInAPIError(resp.status_code, "", "initializeUpload returned no uploadUrl / image URN")
-        host = urlparse(upload_url).hostname or ""
-        if not (host == "linkedin.com" or host.endswith(".linkedin.com")):  # never send the token elsewhere
-            raise LinkedInAPIError(0, "", f"unexpected upload host {host!r}")
+        parts = urlparse(upload_url)
+        host = parts.hostname or ""
+        # never send the token anywhere but LinkedIn, and never in clear text
+        if parts.scheme != "https" or not (host == "linkedin.com" or host.endswith(".linkedin.com")):
+            raise LinkedInAPIError(0, "", f"unexpected upload URL {parts.scheme}://{host}")
         put = await self._http.put(upload_url, content=data,
                                    headers={"Authorization": f"Bearer {self.s.linkedin_access_token}",
                                             "Content-Type": "application/octet-stream"})
@@ -146,11 +153,20 @@ class LinkedInClient:
         if self.dry_run:
             log.info("[dry-run] create LinkedIn post %s", {k: body[k] for k in ("author", "content") if k in body})
             return f"urn:li:share:dry_{uuid.uuid4().hex[:10]}"
-        # Retry only 429 (nothing was created). A 5xx may have created the post, so never retry it: no duplicates.
-        resp = await self.request("POST", "/posts", json=body, retry_on={429})
-        urn = resp.headers.get("x-restli-id") or resp.headers.get("x-linkedin-id") or ""
+        # Retry only 429 (nothing was created). A 5xx or a timeout may have created the post, so never retry it,
+        # and say so: the caller must not treat it as a plain failure that is safe to approve again.
+        try:
+            resp = await self.request("POST", "/posts", json=body, retry_on={429})
+        except httpx.TransportError as exc:  # timeout or dropped connection after the request was sent
+            raise PostMayBeLiveError(0, type(exc).__name__,
+                                     "no answer from LinkedIn while creating the post") from exc
+        except LinkedInAPIError as exc:
+            if exc.status >= 500:
+                raise PostMayBeLiveError(exc.status, exc.code, exc.message) from exc
+            raise  # 4xx: LinkedIn refused it, nothing was posted
+        urn = resp.headers.get("x-restli-id") or resp.headers.get("x-linkedin-id") or _id_from_body(resp)
         if not urn:
-            raise LinkedInAPIError(resp.status_code, "", "LinkedIn created the post but returned no id")
+            raise PostMayBeLiveError(resp.status_code, "", "LinkedIn accepted the post but returned no post id")
         return urn
 
     async def delete_post(self, urn: str) -> None:
@@ -184,6 +200,16 @@ class LinkedInClient:
 
     async def aclose(self) -> None:
         await self._http.aclose()
+
+
+def _id_from_body(resp: httpx.Response) -> str:
+    """Fallback when the x-restli-id header is missing: some responses carry the URN in the body instead."""
+    try:
+        body = resp.json()
+    except ValueError:
+        return ""
+    urn = str((body or {}).get("id") or "") if isinstance(body, dict) else ""
+    return urn if urn.startswith("urn:li:") else ""
 
 
 def post_url(urn: str) -> str:

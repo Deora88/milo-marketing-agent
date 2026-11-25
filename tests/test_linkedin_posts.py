@@ -13,7 +13,7 @@ from PIL import Image
 from app.config import Settings, get_settings
 from app.db import store
 from app.db.models import SocialPost, now
-from app.linkedin.client import LinkedInAPIError, LinkedInClient
+from app.linkedin.client import LinkedInAPIError, LinkedInClient, PostMayBeLiveError
 from app.main import app
 from app.social import instagram, linkedin, posts
 from tests.conftest import WEB
@@ -49,9 +49,11 @@ def _live(**kw):
 class FakeLinkedIn:
     """httpx transport that plays LinkedIn's Images + Posts API and records every request."""
 
-    def __init__(self, post_status=201, image_statuses=None, upload_host="www.linkedin.com"):
+    def __init__(self, post_status=201, image_statuses=None, upload_host="www.linkedin.com", upload_scheme="https",
+                 post_id_in="header", post_timeout=False):
         self.calls, self.n = [], 0
-        self.post_status, self.upload_host = post_status, upload_host
+        self.post_status, self.upload_host, self.upload_scheme = post_status, upload_host, upload_scheme
+        self.post_id_in, self.post_timeout = post_id_in, post_timeout  # post_id_in: header | body | none
         self.image_statuses = list(image_statuses or [])
 
     def __call__(self, req: httpx.Request) -> httpx.Response:
@@ -60,7 +62,7 @@ class FakeLinkedIn:
         if path == "/rest/images" and req.url.params.get("action") == "initializeUpload":
             self.n += 1
             return httpx.Response(200, json={"value": {
-                "uploadUrl": f"https://{self.upload_host}/dms-uploads/img{self.n}/uploaded-image/0",
+                "uploadUrl": f"{self.upload_scheme}://{self.upload_host}/dms-uploads/img{self.n}/uploaded-image/0",
                 "image": f"urn:li:image:IMG{self.n}", "uploadUrlExpiresAt": 0}})
         if req.method == "PUT":
             return httpx.Response(201)
@@ -68,9 +70,14 @@ class FakeLinkedIn:
             return httpx.Response(200, json={"status": self.image_statuses.pop(0) if self.image_statuses
                                              else "AVAILABLE"})
         if path == "/rest/posts" and req.method == "POST":
+            if self.post_timeout:  # LinkedIn got the request, the answer never came back
+                raise httpx.ReadTimeout("timed out", request=req)
             if self.post_status >= 400:
                 return httpx.Response(self.post_status, json={"message": "boom", "status": self.post_status})
-            return httpx.Response(201, headers={"x-restli-id": "urn:li:share:7000000000000000001"})
+            urn = "urn:li:share:7000000000000000001"
+            if self.post_id_in == "header":
+                return httpx.Response(201, headers={"x-restli-id": urn})
+            return httpx.Response(201, json={"id": urn} if self.post_id_in == "body" else {})
         return httpx.Response(404, json={"message": "unexpected " + path})
 
     def client(self, **kw):
@@ -145,6 +152,37 @@ def test_live_request_needs_token_but_no_public_url(monkeypatch):
     assert r["status"] == "pending_approval" and "LinkedIn Page" in r["summary"]
 
 
+def _live_env(monkeypatch, expires):
+    monkeypatch.setenv("LINKEDIN_DRY_RUN", "false")
+    monkeypatch.setenv("LINKEDIN_ACCESS_TOKEN", "LI-TOKEN-123456")
+    monkeypatch.setenv("LINKEDIN_ORGANIZATION_ID", ORG)
+    monkeypatch.setenv("LINKEDIN_TOKEN_EXPIRES_AT", expires)
+    get_settings.cache_clear()
+
+
+def test_expired_token_is_refused_at_request_time(monkeypatch):
+    _live_env(monkeypatch, (now() - timedelta(days=1)).date().isoformat())
+    p = _draft("text")
+    with pytest.raises(posts.PostError, match="token expired"):
+        posts.request_publish(p.id)
+    assert posts.get(p.id).status == "draft"
+
+
+def test_token_expiring_before_the_scheduled_time_is_refused(monkeypatch):
+    _live_env(monkeypatch, (now() + timedelta(days=3)).date().isoformat())
+    p = _draft("text", when=now() + timedelta(days=10))
+    with pytest.raises(posts.PostError, match="before the scheduled time"):
+        posts.request_publish(p.id)
+
+
+def test_token_close_to_expiry_warns_but_still_requests(monkeypatch):
+    _live_env(monkeypatch, (now() + timedelta(days=4)).date().isoformat())
+    r = posts.request_publish(_draft("text").id)
+    assert r["status"] == "pending_approval" and "expires in" in r["warning"] and "expires in" in r["message"]
+    _live_env(monkeypatch, (now() + timedelta(days=40)).date().isoformat())
+    assert "warning" not in posts.request_publish(_draft("text").id)
+
+
 # --- approval gate (dry run) ---
 
 def test_approve_in_dry_run_marks_published_without_linkedin():
@@ -211,6 +249,48 @@ def test_server_error_on_create_is_not_retried_and_marks_failed():
     assert len(fake.posts_bodies()) == 1  # a 5xx may have created it: never send it twice
     got = posts.get(p.id)
     assert got.status == "failed" and "500" in got.error and "LI-TOKEN" not in got.error
+    assert "Check LinkedIn before retrying" in got.error  # a 5xx may have posted it
+
+
+def test_refused_create_is_a_plain_failure():
+    fake = FakeLinkedIn(post_status=422)
+    p = _approved(_draft("text"))
+    with pytest.raises(LinkedInAPIError) as err:
+        asyncio.run(linkedin.publish(p.id, fake.client()))
+    assert not isinstance(err.value, PostMayBeLiveError)
+    got = posts.get(p.id)
+    assert got.status == "failed" and "422" in got.error and "Check LinkedIn" not in got.error
+
+
+def test_timeout_on_create_says_the_post_may_be_live():
+    fake = FakeLinkedIn(post_timeout=True)
+    p = _approved(_draft("text"))
+    with pytest.raises(PostMayBeLiveError):
+        asyncio.run(linkedin.publish(p.id, fake.client()))
+    assert len(fake.posts_bodies()) == 1  # not retried
+    got = posts.get(p.id)
+    assert got.status == "failed" and got.error.startswith("Check LinkedIn before retrying")
+    assert "ReadTimeout" in got.error and not got.linkedin_post_urn
+
+
+def test_post_id_only_in_body_is_saved_and_a_re_approve_does_not_post_again():
+    fake = FakeLinkedIn(post_id_in="body")
+    p = _approved(_draft("text"))
+    got = asyncio.run(linkedin.publish(p.id, fake.client()))
+    assert got.status == "published" and got.linkedin_post_urn == "urn:li:share:7000000000000000001"
+    # even if the post is pushed back to an approvable state, the saved URN stops a second post
+    store.update(SocialPost, p.id, {"status": "scheduled"})
+    again = asyncio.run(linkedin.publish(p.id, fake.client()))
+    assert again.status == "published" and len(fake.posts_bodies()) == 1
+
+
+def test_success_with_no_post_id_is_failed_with_check_linkedin_note():
+    fake = FakeLinkedIn(post_id_in="none")
+    p = _approved(_draft("text"))
+    with pytest.raises(PostMayBeLiveError, match="no post id"):
+        asyncio.run(linkedin.publish(p.id, fake.client()))
+    got = posts.get(p.id)
+    assert got.status == "failed" and got.error.startswith("Check LinkedIn before retrying")
 
 
 def test_rate_limit_on_create_is_retried():
@@ -224,9 +304,18 @@ def test_rate_limit_on_create_is_retried():
 def test_upload_url_off_linkedin_is_refused():
     fake = FakeLinkedIn(upload_host="evil.example.com")
     p = _approved(_draft("photo", n=1))
-    with pytest.raises(LinkedInAPIError, match="upload host"):
+    with pytest.raises(LinkedInAPIError, match="upload URL"):
         asyncio.run(linkedin.publish(p.id, fake.client()))
     assert not [r for r in fake.calls if r.method == "PUT"]  # the token never left LinkedIn
+
+
+def test_upload_url_over_plain_http_is_refused():
+    fake = FakeLinkedIn(upload_scheme="http")
+    p = _approved(_draft("photo", n=1))
+    with pytest.raises(LinkedInAPIError, match="upload URL http://"):
+        asyncio.run(linkedin.publish(p.id, fake.client()))
+    assert not [r for r in fake.calls if r.method == "PUT"]  # the token is never sent in clear text
+    assert "Check LinkedIn" not in posts.get(p.id).error  # failed before the post was created
 
 
 def test_failed_image_processing_stops_before_the_post():

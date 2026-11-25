@@ -296,6 +296,7 @@ def request_publish(post_id: int, source: str = "user") -> dict:
         raise PostError("Write the post text first: LinkedIn posts need text.")
     if p.scheduled_at and p.scheduled_at < now() + timedelta(minutes=2):
         raise PostError("The schedule time has passed. Pick a new time or clear it.")
+    warning = ""
     if p.platform == "linkedin":
         as_me = s.linkedin_author.strip().lower() == "me"
         who, who_id = (("LINKEDIN_PERSON_ID", s.linkedin_person_id) if as_me
@@ -303,6 +304,8 @@ def request_publish(post_id: int, source: str = "user") -> dict:
         if not s.linkedin_dry_run and not (s.linkedin_access_token and who_id):
             raise PostError(f"Set LINKEDIN_ACCESS_TOKEN and {who} in .env (scripts/linkedin_token.py prints both), "
                             "or keep LINKEDIN_DRY_RUN=true to try it without posting.")
+        if not s.linkedin_dry_run:
+            warning = _linkedin_token_check(s.linkedin_token_expires_at, p.scheduled_at)
     elif not s.meta_dry_run and not s.public_base_url.startswith("https://"):
         raise PostError("Set PUBLIC_BASE_URL in .env to your public https address (your ngrok domain): Meta "
                         "downloads the post's images and video from there.")
@@ -315,8 +318,36 @@ def request_publish(post_id: int, source: str = "user") -> dict:
                               requested_by=current_actor()))
     store.update(SocialPost, p.id, {"status": "pending_approval", "error": ""})
     store.audit("approval_requested", approval_id=a.id, action="publish_post", post_id=p.id, source=source)
-    return {"status": "pending_approval", "approval_id": a.id, "summary": a.summary,
-            "message": "Not posted. The user must click Approve in the Milo dashboard."}
+    out = {"status": "pending_approval", "approval_id": a.id, "summary": a.summary,
+           "message": "Not posted. The user must click Approve in the Milo dashboard."}
+    if warning:
+        out["warning"] = warning
+        out["message"] += " " + warning
+    return out
+
+
+TOKEN_WARN_DAYS = 7
+
+
+def _linkedin_token_check(expires_at: str, scheduled_at: datetime | None) -> str:
+    """Refuse a LinkedIn post whose token has expired (or will have expired by the scheduled time), so it fails
+    here instead of with a 401 after approval. Returns a warning when the token has under TOKEN_WARN_DAYS left.
+    LINKEDIN_TOKEN_EXPIRES_AT is optional: without it there is nothing to check."""
+    if not expires_at:
+        return ""
+    try:
+        expires = datetime.fromisoformat(expires_at[:10]).replace(tzinfo=timezone.utc)  # as the status page
+    except ValueError:
+        return ""
+    fix = "Make a new one with scripts/linkedin_token.py and update .env."
+    if expires <= now():
+        raise PostError(f"The LinkedIn token expired on {expires_at[:10]}. {fix}")
+    if scheduled_at and scheduled_at >= expires:
+        raise PostError(f"The LinkedIn token expires on {expires_at[:10]}, before the scheduled time. {fix}")
+    days = (expires - now()).days
+    if days < TOKEN_WARN_DAYS:
+        return f"The LinkedIn token expires in {days} day{'s' if days != 1 else ''} ({expires_at[:10]}). {fix}"
+    return ""
 
 
 def media_file(token: str, name: str) -> Path | None:

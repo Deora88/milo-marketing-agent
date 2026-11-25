@@ -16,7 +16,12 @@ from pathlib import Path
 
 from app.db import store
 from app.db.models import SocialPost, now
-from app.linkedin.client import LinkedInAPIError, LinkedInClient, post_url
+from app.linkedin.client import (
+    LinkedInAPIError,
+    LinkedInClient,
+    PostMayBeLiveError,
+    post_url,
+)
 from app.util.redact import redact
 
 log = logging.getLogger("milo.posts")
@@ -29,6 +34,9 @@ _HASHTAG = re.compile(r"(?<![\w#\\])#(\w+)")
 
 class PublishError(RuntimeError):
     pass
+
+
+MAYBE_LIVE = "Check LinkedIn before retrying: the post may already be live."
 
 
 ANALYTICS = {"impressions": "IMPRESSION", "members_reached": "MEMBERS_REACHED", "reshares": "RESHARE"}
@@ -134,6 +142,7 @@ async def publish(post_id: int, client: LinkedInClient | None = None, sleep=asyn
     own = client is None
     client = client or LinkedInClient(sleep=sleep)
     mode = "dry_run" if client.dry_run else "live"
+    creating = False  # True once POST /posts may have reached LinkedIn
     try:
         author = client.author_urn
         urns = []
@@ -141,6 +150,7 @@ async def publish(post_id: int, client: LinkedInClient | None = None, sleep=asyn
             urn = await client.upload_image(Path(path).read_bytes(), owner=author)
             await client.wait_image_available(urn)
             urns.append(urn)
+        creating = True
         urn = await client.create_post(build_body(p, author, urns))
         # It is live now: save the URN first, so no failure below can lead to a second post.
         store.update(SocialPost, p.id, {"linkedin_post_urn": urn, "meta_mode": mode})
@@ -155,8 +165,13 @@ async def publish(post_id: int, client: LinkedInClient | None = None, sleep=asyn
                 store.update(SocialPost, p.id, {"status": "published", "published_at": current.published_at or now(),
                                                 "error": f"Posted, but Milo hit an error afterwards: {note}"[:300]})
                 return store.get(SocialPost, p.id)
-            store.update(SocialPost, p.id, {"status": "failed", "error": note})
-            store.audit("post_failed", post_id=p.id, platform="linkedin", error=note)
+            # A 4xx on create means LinkedIn refused it; anything else at or after create may have posted it.
+            refused = isinstance(exc, LinkedInAPIError) and not isinstance(exc, PostMayBeLiveError) \
+                and 400 <= exc.status < 500
+            maybe_live = mode == "live" and creating and not refused
+            error = f"{MAYBE_LIVE} {note}"[:300] if maybe_live else note
+            store.update(SocialPost, p.id, {"status": "failed", "error": error})
+            store.audit("post_failed", post_id=p.id, platform="linkedin", error=note, may_be_live=maybe_live)
         except Exception:
             log.exception("could not record the result of LinkedIn post %s", p.id)
         raise

@@ -7,8 +7,9 @@
 - A session is a random 256-bit id in an HttpOnly, SameSite=Strict cookie. Only its SHA-256 is stored, so a
   copy of the database cannot be used to sign in. Sessions end after SESSION_HOURS, on sign-out, or when an
   admin disables the user or resets the password.
-- Sign-in is slowed down: MAX_FAILS wrong tries for one email (or from one remote address; not 127.0.0.1, which
-  every local and tunnelled user shares) lock it for LOCK_MINUTES.
+- Sign-in is slowed down: MAX_FAILS wrong tries for one email (or from one public remote address) lock it for
+  LOCK_MINUTES. Loopback and private addresses are skipped for the per-address lock: every local and tunnelled
+  user shares 127.0.0.1, and under Docker every request arrives from the bridge address (172.x).
 - First run: while no user exists, the sign-in page offers "create the first admin". It is reachable only from
   this computer (the tunnel guard in app/security.py blocks /api through ngrok) and stops working as soon as one
   user exists.
@@ -108,20 +109,31 @@ def _locked(key: str) -> bool:
     return len(tries) >= MAX_FAILS
 
 
-def _loopback(ip: str) -> bool:
+# Private networks (RFC 1918, IPv6 unique-local, link-local): the Docker bridge, a reverse proxy on the LAN.
+# Listed on purpose instead of ip.is_private, which also covers documentation and other special ranges.
+_PRIVATE = [ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16",
+                                                "fc00::/7", "fe80::/10")]
+
+
+def _shared(ip: str) -> bool:
+    """An address many users share: loopback (this computer, the ngrok tunnel) or a private network (the Docker
+    bridge, a reverse proxy on the LAN). A per-address lock there would lock everyone out."""
     try:
-        return ipaddress.ip_address(ip).is_loopback
+        a = ipaddress.ip_address(ip)
     except ValueError:
         return False
+    if getattr(a, "ipv4_mapped", None):
+        a = a.ipv4_mapped
+    return a.is_loopback or any(a.version == n.version and a in n for n in _PRIVATE)
 
 
 def login(email: str, password: str, ip: str = "") -> tuple[str, User]:
     """Check the password and start a session. Returns (session id for the cookie, user)."""
     e = (email or "").strip().lower()
-    # The per-address lock only means something for a real remote address. On this computer (and through a tunnel,
-    # which also connects from 127.0.0.1) every user shares one address, so it would turn five wrong tries by
-    # anyone into a lock-out for everyone; the per-email lock still protects each account there.
-    keys = [f"email:{e}"] + ([f"ip:{ip}"] if ip and not _loopback(ip) else [])
+    # The per-address lock only means something for a real remote address. On this computer, through a tunnel
+    # (127.0.0.1) and under Docker (the bridge address, 172.x) every user shares one address, so it would turn five
+    # wrong tries by anyone into a lock-out for everyone; the per-email lock still protects each account there.
+    keys = [f"email:{e}"] + ([f"ip:{ip}"] if ip and not _shared(ip) else [])
     if any(_locked(k) for k in keys):
         store.audit("login_locked", user=e)
         raise AuthError(f"Too many wrong tries. Sign-in is locked for {LOCK_MINUTES} minutes.")

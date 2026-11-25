@@ -472,18 +472,20 @@ The same **Posts** page also posts to LinkedIn, publicly, either **as your own p
   1. linkedin.com/developers → Create app (it asks for a LinkedIn Page to link; any Page you admin works).
   2. Products tab → add **Share on LinkedIn** and **Sign In with LinkedIn using OpenID Connect**.
   3. Auth tab → add the redirect `http://localhost:8765/callback`; copy the Client ID and Primary Client Secret.
-  4. `uv run python scripts/linkedin_token.py --as me --client-id <id> --client-secret <secret>`, sign in, and
+  4. `uv run python scripts/linkedin_token.py --as me --client-id <id>`, sign in, and
      paste the printed `LINKEDIN_AUTHOR`, `LINKEDIN_PERSON_ID`, `LINKEDIN_ACCESS_TOKEN`, `LINKEDIN_TOKEN_EXPIRES_AT`
      into `.env`. Set `LINKEDIN_DRY_RUN=false` and restart Milo.
 - **Setup, as the company Page:**
   1. A LinkedIn developer app linked to the company Page, verified by a Page super admin, with the
      **Community Management API** approved (it must be the only product on that app; registered companies only).
   2. In the app's Auth tab add the redirect `http://localhost:8765/callback`, then run
-     `uv run python scripts/linkedin_token.py --as page --client-id <id> --client-secret <secret>` and sign in as a
+     `uv run python scripts/linkedin_token.py --as page --client-id <id>` and sign in as a
      Page admin. It prints `LINKEDIN_AUTHOR=page`, the token, its expiry and `LINKEDIN_ORGANIZATION_ID`.
   3. Keep `LINKEDIN_DRY_RUN=true` to try the flow (approved posts are logged, not sent), then set it to `false`.
 - **Token:** lasts 60 days (refresh tokens are only for LinkedIn's approved partners). The status page warns 7 days
-  before `LINKEDIN_TOKEN_EXPIRES_AT`; a 401 from LinkedIn means: run the script again.
+  before `LINKEDIN_TOKEN_EXPIRES_AT`, and Milo refuses a
+  LinkedIn post request once the token has expired (or will have by the scheduled time); a 401 from LinkedIn means:
+  run the script again.
 
 ## PDF answers (search and exact quotes)
 How the DM and comment bot answers from your PDFs (`app/dm/knowledge.py`, `app/dm/embeddings.py`):

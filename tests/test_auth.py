@@ -192,6 +192,22 @@ def test_remote_address_still_locks_after_five_wrong_tries():
         auth.login("b@example.com", PW, ip="203.0.113.9")
 
 
+
+@pytest.mark.parametrize("shared_ip", ["172.17.0.1", "10.0.0.5", "192.168.1.20", "::1"])
+def test_wrong_tries_from_a_shared_address_do_not_lock_out_other_users(shared_ip):
+    # Under Docker every request arrives from the bridge address (172.17.0.1), not 127.0.0.1
+    auth.create_user("a@example.com", PW)
+    auth.create_user("b@example.com", PW)
+    for i in range(5):
+        with pytest.raises(auth.AuthError):
+            auth.login(f"x{i}@example.com", "wrong password!", ip=shared_ip)
+    assert auth.login("b@example.com", PW, ip=shared_ip)[1].email == "b@example.com"
+    for _ in range(5):  # the per-email lock still protects each account there
+        with pytest.raises(auth.AuthError):
+            auth.login("a@example.com", "wrong password!", ip=shared_ip)
+    with pytest.raises(auth.AuthError, match="locked"):
+        auth.login("a@example.com", PW, ip=shared_ip)
+
 def test_chat_sessions_are_kept_per_user(monkeypatch):
     from app.api import chat as chat_api
 
